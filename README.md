@@ -9,6 +9,8 @@ Une seule arme, le **Ferro** : un tir par chargeur, un rechargement lent, projec
 - **Battle royale** : chacun pour soi, bots au choix, départs répartis sur la carte, zone qui se resserre, le dernier en vie gagne.
 - **Prop hunt** : un chasseur tiré au sort contre des props qui se transforment en objets de la carte (**E**). Le chasseur est aveugle 30 s, un tir tue, les props sifflent toutes les 20 s. Sans bots, 2 joueurs minimum.
 
+- **Survie zombies** : coopération, 10 vagues de monstres (Faucheurs aux griffes qui balayent le sol, Bondisseurs qui bondissent). Entre les vagues, les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots.
+
 Les bots ont quatre niveaux de difficulté (Facile, Normal, Difficile, Expert).
 
 ## Lancer
@@ -59,7 +61,7 @@ Réseau : chaque client fait autorité sur son mouvement ; le serveur valide les
 
 - **Raider** : *Sci-Fi Soldier / Futuristic Combat Trooper* par **ART_LOLL** (Sketchfab, CC BY 4.0), rigué avec Mixamo. Animations : Mixamo (Adobe).
 - **Ferro** : *IZH-27* par **PeLmEsHkO** (Sketchfab, CC BY 4.0).
-- **Personnages et fusil Longshot** : modèles générés avec Meshy AI (`assets/characters/`, `assets/weapons/`).
+- **Personnages, monstres et fusils (Longshot, fusil à vapeur)** : modèles générés avec Meshy AI (`assets/characters/`, `assets/monsters/`, `assets/weapons/`).
 - **Épaves et conteneur** (Sketchfab, CC BY 4.0) : *Crashed Abandoned Car*, *Abandoned Generic Sedan 1 et 2*, *Crashed Abandoned Truck* par **rashad-brahimli** ; *Freight shipping container - Rusted* par **sousinho**.
 - **Poly Haven** (CC0) : textures, ciels, modèles scannés et kits de façades.
 - **Audio** (OpenGameArt, CC0 sauf indication) : sons de tirs, d'armes, d'explosions, de pas, de voix et de vent de divers auteurs, *Boom Pack 1* par dklon (CC BY 3.0), musiques de TinyWorlds et HaelDB.

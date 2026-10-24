@@ -50,6 +50,8 @@ func server_begin() -> void:
 			_begin_br()
 		Game.MODE_PH:
 			_begin_ph()
+		Game.MODE_ZOMBIE:
+			_begin_zombie()
 		_:
 			_begin_teams()
 	for e in roster:
@@ -134,6 +136,19 @@ func _begin_ph() -> void:
 	print("[MATCH] Prop hunt : %d joueurs" % list.size())
 
 
+## Zombie survival: every human on the survivors' side (team 0), no bots.
+func _begin_zombie() -> void:
+	var list := _human_entries()
+	for i in list.size():
+		var e: Dictionary = list[i]
+		e.team = 0
+		var sp := arena.map.get_spawn(0, i, list.size())
+		e.pos = sp.pos
+		e.yaw = sp.yaw
+		_register(e)
+	print("[MATCH] Survie zombies : %d joueurs" % list.size())
+
+
 func server_restart() -> void:
 	if not multiplayer.is_server():
 		return
@@ -160,6 +175,13 @@ func _start_round() -> void:
 					p.net_respawn.rpc(sp.pos, sp.yaw)
 		Game.MODE_PH:
 			_start_ph_round()
+		Game.MODE_ZOMBIE:
+			arena.monsters.server_reset()
+			for i in roster.size():
+				var p := arena.get_player(roster[i].node)
+				if p:
+					var sp := arena.map.get_spawn(0, i, roster.size())
+					p.net_respawn.rpc(sp.pos, sp.yaw)
 		_:
 			var by_team := [[], []]
 			for e in roster:
@@ -246,6 +268,8 @@ func _live_time() -> float:
 			return BR_TIME
 		Game.MODE_PH:
 			return PropHunt.HIDE_TIME + PropHunt.SEEK_TIME
+		Game.MODE_ZOMBIE:
+			return 86400.0 # no clock: the waves decide
 	return float(Game.config.round_time) + 10.0 * maxf(float(Game.config.team_size) - 2.0, 0.0) # bigger squads need more time
 
 
@@ -260,6 +284,8 @@ func _process(delta: float) -> void:
 				_set_state(State.LIVE, _live_time())
 				if Game.is_ph():
 					arena.prop_hunt.server_go()
+				elif Game.is_zombie():
+					arena.monsters.server_go()
 		State.LIVE:
 			if time_left <= 0.0:
 				_end_round(_timeout_winner())
@@ -309,6 +335,13 @@ func _timeout_winner() -> int:
 func server_check_round() -> void:
 	if state != State.LIVE:
 		return
+	if Game.is_zombie():
+		# Lost once nobody is left standing (knocked-down survivors can still be revived).
+		for p: Player in arena.players:
+			if p.alive:
+				return
+		_end_round(1)
+		return
 	if Game.is_ffa():
 		var left: Array[Player] = []
 		for p: Player in arena.players:
@@ -324,6 +357,11 @@ func server_check_round() -> void:
 		_end_round(1)
 	elif a[1] == 0:
 		_end_round(0)
+
+
+func server_end_round(w: int) -> void:
+	if state == State.LIVE:
+		_end_round(w)
 
 
 func _end_round(w: int) -> void:
@@ -394,6 +432,30 @@ func server_handle_hit(shooter: Player, shot_id: int, target: String, headshot: 
 	v.server_apply_damage(dmg, shooter, headshot, "FERRO", shot.origin, impact)
 
 
+## Zombie mode: damage a Ferro slug dealt to monster `monster_id`. Weapons hit harder than
+## against players; a head shot doubles it.
+func server_handle_monster_hit(shooter: Player, shot_id: int, monster_id: int, headshot: bool, hit_pos := Vector3.INF) -> void:
+	if not shooter.server_shots.has(shot_id) or arena.monsters == null:
+		return
+	var shot: Dictionary = shooter.server_shots[shot_id]
+	shooter.server_shots.erase(shot_id)
+	var m := arena.monsters.get_monster(monster_id)
+	if m == null or not m.alive or not shooter.alive:
+		return
+	var age := Time.get_ticks_msec() * 0.001 - float(shot.t)
+	var dist := (shot.origin as Vector3).distance_to(m.global_position)
+	if dist > Projectile.SPEED * (age + 0.35) + 4.0 or dist > Player.FIRE_RANGE + 5.0:
+		return
+	var dmg := Player.DAMAGE * MonsterManager.PLAYER_DAMAGE_MULT * (Player.HEADSHOT_MULT if headshot else 1.0)
+	var was_alive := m.alive
+	var key := String(shooter.name)
+	if stats.has(key):
+		stats[key].dmg += int(dmg)
+	var killed := m.server_damage(dmg, shooter, headshot)
+	if not shooter.is_bot:
+		shooter.net_hit_confirm.rpc_id(shooter.get_multiplayer_authority(), headshot, Player.HIT_KILL if killed and was_alive else Player.HIT_HEALTH, dmg, hit_pos if hit_pos != Vector3.INF else m.global_position + Vector3(0, 1.2, 0), MonsterRig.kind_data(m.kind).name)
+
+
 func server_on_damage(attacker: Player, _victim: Player, amount: float) -> void:
 	var k := String(attacker.name)
 	if stats.has(k):
@@ -402,6 +464,14 @@ func server_on_damage(attacker: Player, _victim: Player, amount: float) -> void:
 
 func server_on_kill(victim: Player, killer: Player, headshot: bool, damagers: Array, weapon := "FERRO") -> void:
 	var vk := String(victim.name)
+	if killer == null:
+		# A monster got them.
+		if stats.has(vk):
+			stats[vk].d += 1
+		_net_kill.rpc(weapon.capitalize(), 1, victim.display_name, victim.team, false, weapon, FEED_KNOCK)
+		_sync_stats()
+		server_check_round()
+		return
 	var kk := String(killer.name)
 	if stats.has(kk) and kk != vk:
 		stats[kk].k += 1
@@ -419,6 +489,11 @@ func server_on_kill(victim: Player, killer: Player, headshot: bool, damagers: Ar
 
 ## A knocked-down player was finished off: feed only (the knock was the kill).
 func server_on_finish(victim: Player, killer: Player, weapon := "FERRO") -> void:
+	if killer == null:
+		_net_kill.rpc(weapon.capitalize(), 1, victim.display_name, victim.team, false, weapon, FEED_FINISH)
+		_sync_stats()
+		server_check_round()
+		return
 	_net_kill.rpc(killer.display_name, killer.team, victim.display_name, victim.team, false, weapon, FEED_FINISH)
 	if Game.debug.has("log_items"):
 		print("[KILL] %s achève %s" % [killer.display_name, victim.display_name])

@@ -178,7 +178,7 @@ func _debug_custom_shots() -> void:
 		var l := ArmorKit.random_loadout(1000 + i * 77) if i > 0 else Game.loadout
 		if Game.debug.has("all_pieces"):
 			l = {"body": i % 2, "helmet": i % 5, "chest": i % 4, "pack": i % 4, "legs": i % 3,
-				"suit": (i * 3) % 10, "fabric": i % 6, "armor": (i * 7) % 10, "pattern": i % 5, "skin": i % 6, "weapon": (i / 6) % 2}
+				"suit": (i * 3) % 10, "fabric": i % 6, "armor": (i * 7) % 10, "pattern": i % 5, "skin": i % 6, "weapon": i % 3}
 		Game.loadout = ArmorKit.sanitize(l)
 		_custom.open(Game.loadout)
 		_spawn_preview()
@@ -553,8 +553,8 @@ func _apply_mode_rows() -> void:
 	for r in _rows_bots:
 		(r as Control).visible = m == Game.MODE_TDM
 	_row_br.visible = m == Game.MODE_BR
-	_row_diff.visible = m != Game.MODE_PH
-	_mode_note.text = ["Deux équipes, manches successives, à terre / relevage.", "Chacun pour soi : tout le monde est lâché aux quatre coins de la carte, une zone se resserre, le dernier en vie gagne.", "Un chasseur (tiré au sort) contre des props. Les props se transforment en objets (E) pendant 30 s, puis le chasseur les traque : un tir tue. Sifflement des props toutes les 20 s. Pas de bots, 2 joueurs minimum."][m]
+	_row_diff.visible = m != Game.MODE_PH and m != Game.MODE_ZOMBIE
+	_mode_note.text = ["Deux équipes, manches successives, à terre / relevage.", "Chacun pour soi : tout le monde est lâché aux quatre coins de la carte, une zone se resserre, le dernier en vie gagne.", "Un chasseur (tiré au sort) contre des props. Les props se transforment en objets (E) pendant 30 s, puis le chasseur les traque : un tir tue. Sifflement des props toutes les 20 s. Pas de bots, 2 joueurs minimum.", "Coopération : tenez %d vagues de monstres. Faucheurs (colosses aux griffes qui balayent le sol) et Bondisseurs (bonds fulgurants). Entre les vagues, les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots." % MonsterManager.WAVES][m]
 	if _team_btn:
 		_team_btn.visible = m == Game.MODE_TDM
 

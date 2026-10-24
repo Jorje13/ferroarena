@@ -300,6 +300,28 @@ func setup(p_arena: Arena) -> void:
 	arena.match_mgr.state_changed.connect(_on_state_changed)
 	arena.match_mgr.kill_feed.connect(_on_kill_feed)
 	arena.match_mgr.stats_changed.connect(_refresh_scoreboard)
+	if arena.monsters:
+		arena.monsters.wave_changed.connect(_on_wave_changed)
+
+
+var _last_wave_phase := -1
+var _last_wave := -1
+
+
+func _on_wave_changed() -> void:
+	var mo := arena.monsters
+	if mo.wave == _last_wave and mo.phase == _last_wave_phase:
+		return
+	_last_wave = mo.wave
+	_last_wave_phase = mo.phase
+	match mo.phase:
+		MonsterManager.Phase.WAVE:
+			_show_announce("VAGUE %d" % mo.wave, "%d ennemis" % mo.total, 3.0)
+		MonsterManager.Phase.BREAK:
+			if mo.wave > 0:
+				_show_announce("VAGUE %d REPOUSSÉE" % mo.wave, "Les tombés se relèvent · fouillez les caisses", 4.0)
+			else:
+				_show_announce("RESTEZ ENSEMBLE", "La première vague arrive", 3.0)
 
 
 static func _offsets(c: Control, pos: Vector2, sz: Vector2) -> void:
@@ -360,7 +382,7 @@ func _process_hud(delta: float) -> void:
 	_score_l.text = str(mm.scores[0])
 	_score_r.text = str(mm.scores[1])
 	var tl := int(ceil(mm.time_left))
-	_timer.text = "%d:%02d" % [tl / 60, tl % 60]
+	_timer.text = "" if Game.is_zombie() else "%d:%02d" % [tl / 60, tl % 60]
 	_round_label.text = "MANCHE %d  ·  %d POUR GAGNER" % [mm.round_num, mm.rounds_to_win()]
 	_update_mode_ui()
 
@@ -807,7 +829,7 @@ func _refresh_scoreboard() -> void:
 	for c in _sb_grid.get_children():
 		c.queue_free()
 	var stats := arena.match_mgr.stats
-	var groups := [-1] if Game.is_ffa() else [0, 1]
+	var groups := [-1] if Game.is_ffa() else ([0] if Game.is_zombie() else [0, 1])
 	for t in groups:
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", 3)
@@ -867,6 +889,8 @@ func _show_end() -> void:
 		_end_score.text = "Dernier survivant : %s" % wname
 	elif Game.mode() == Game.MODE_PH:
 		_end_score.text = "Le chasseur gagne" if mm.match_winner == 0 else "Les props gagnent"
+	elif Game.is_zombie():
+		_end_score.text = "Vague %d / %d" % [arena.monsters.wave, MonsterManager.WAVES]
 	for c in _end_buttons.get_children():
 		c.queue_free()
 	if multiplayer.is_server():
@@ -1167,6 +1191,29 @@ func _update_mode_ui() -> void:
 		_mode_info.text = info
 		_mode_info.add_theme_color_override("font_color", UIStyle.DANGER if info.begins_with("⚠") else UIStyle.ACCENT)
 		return
+	if mode == Game.MODE_ZOMBIE:
+		var mo := arena.monsters
+		if mo == null:
+			return
+		_team_l.text = "VAGUE"
+		_team_l.add_theme_color_override("font_color", UIStyle.TEXT)
+		_score_l.text = "%d / %d" % [maxi(mo.wave, 1), MonsterManager.WAVES]
+		_score_l.add_theme_color_override("font_color", UIStyle.ACCENT)
+		var standing := 0
+		for p: Player in arena.players:
+			if p.alive:
+				standing += 1
+		_round_label.text = "SURVIE ZOMBIES  ·  %d SURVIVANT%s" % [standing, "S" if standing > 1 else ""]
+		var zinfo := ""
+		if live:
+			match mo.phase:
+				MonsterManager.Phase.WAVE:
+					zinfo = "ENNEMIS RESTANTS : %d" % mo.left
+				MonsterManager.Phase.BREAK:
+					zinfo = ("VAGUE %d DANS %d s" % [mo.wave + 1, int(ceil(mo.break_t))]) if mo.break_t > 0.0 else ""
+		_mode_info.text = zinfo
+		_mode_info.add_theme_color_override("font_color", UIStyle.ACCENT)
+		return
 	# Prop hunt
 	var ph := arena.prop_hunt
 	if ph == null:
@@ -1212,6 +1259,8 @@ func _mode_state_changed() -> void:
 		Audio.play_2d("round", -4.0)
 		if Game.mode() == Game.MODE_BR:
 			_show_announce("SURVIVEZ", "Dernier en vie gagne · fouillez les caisses · restez dans la zone", 3.0)
+		elif Game.is_zombie():
+			_show_announce("SURVIVEZ", "Tenez %d vagues · relevez vos alliés [%s] · fouillez les caisses" % [MonsterManager.WAVES, Game.key_label("interact")], 3.5)
 		elif my_team == 0:
 			_show_announce("CHASSEUR", "Patientez : les props se cachent. Puis trouvez-les — un tir suffit.", 3.5)
 		else:
@@ -1227,6 +1276,11 @@ func _mode_state_changed() -> void:
 			if int(mm.stats[k].team) == mm.round_winner:
 				wn = str(mm.stats[k].name)
 		_show_announce("VICTOIRE !" if won else "TERMINÉ", ("Vous êtes le dernier survivant" if won else "Vainqueur : %s" % wn) if wn != "" else "Personne n'a survécu", 4.0)
+	elif Game.is_zombie():
+		if won:
+			_show_announce("VICTOIRE !", "Les %d vagues ont été repoussées" % MonsterManager.WAVES, 4.5)
+		else:
+			_show_announce("ÉQUIPE ANÉANTIE", "Vous avez tenu jusqu'à la vague %d" % arena.monsters.wave, 4.5)
 	else:
 		if mm.round_winner < 0:
 			_show_announce("ÉGALITÉ", "", 4.0)

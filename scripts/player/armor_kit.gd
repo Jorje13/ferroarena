@@ -33,10 +33,10 @@ const FABRIC_COLORS := [
 const SLOTS := {
 	"body": 2, "helmet": 5, "chest": 4, "pack": 4, "legs": 3,
 	"suit": 10, "fabric": 6, "armor": 10, "pattern": 5,
-	"skin": 6, "weapon": 2,
+	"skin": 6, "weapon": 3,
 }
 const SKINS := ["Soldat", "Cybernétique", "Sentinelle", "Rôdeur", "Spectre", "Porteur"]
-const WEAPONS := ["Longshot", "IZH-27"]
+const WEAPONS := ["Longshot", "IZH-27", "Fusil à vapeur"]
 
 
 static func default_loadout() -> Dictionary:

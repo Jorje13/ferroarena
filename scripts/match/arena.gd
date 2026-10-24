@@ -22,6 +22,7 @@ var _nav_region: NavigationRegion3D
 ## Mode helpers (null outside their mode): prop hunt rules, battle royale zone.
 var prop_hunt: PropHunt
 var zone: BattleZone
+var monsters: MonsterManager
 ## Final-image shader (sharpening, aberration), tuned by the camera while aiming.
 var post_mat: ShaderMaterial
 
@@ -33,7 +34,7 @@ var post_mat: ShaderMaterial
 func _ready() -> void:
 	spawner.spawn_function = _spawn_player
 	var me: Dictionary = Game.lobby.get(multiplayer.get_unique_id(), {})
-	local_team = int(me.get("team", 0))
+	local_team = 0 if Game.is_zombie() else int(me.get("team", 0))
 
 	var info := Game.map_info(str(Game.config.map))
 	map = load(info.script).new()
@@ -58,6 +59,10 @@ func _ready() -> void:
 		zone = BattleZone.new()
 		zone.name = "Zone"
 		add_child(zone)
+	elif Game.is_zombie():
+		monsters = MonsterManager.new()
+		monsters.name = "Monsters"
+		add_child(monsters)
 	var weather := map.make_weather()
 	if weather:
 		camera_rig.add_child(weather)
@@ -263,6 +268,8 @@ func server_explosion_damage(thrower: Player, pos: Vector3) -> void:
 		if p == thrower:
 			dmg *= 0.5
 		p.server_apply_damage(dmg, thrower, false, "GRENADE")
+	if monsters:
+		monsters.server_explosion(thrower, pos)
 	for b in barricades.values():
 		if is_instance_valid(b) and b.global_position.distance_to(pos) < 6.5:
 			b.server_damage(lerpf(150.0, 30.0, b.global_position.distance_to(pos) / 6.5))

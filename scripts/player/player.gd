@@ -1394,6 +1394,21 @@ func server_fire(origin: Vector3, dir: Vector3, shot_id: int) -> void:
 	arena.match_mgr.server_register_shot(self, origin, dir, shot_id)
 
 
+## Same for a zombie-mode monster (identified by its manager id).
+func report_monster_hit(shot_id: int, monster_id: int, headshot: bool, hit_pos: Vector3) -> void:
+	if multiplayer.is_server():
+		arena.match_mgr.server_handle_monster_hit(self, shot_id, monster_id, headshot, hit_pos)
+	else:
+		server_monster_hit.rpc_id(1, shot_id, monster_id, headshot, hit_pos)
+
+
+@rpc("any_peer", "reliable")
+func server_monster_hit(shot_id: int, monster_id: int, headshot: bool, hit_pos: Vector3) -> void:
+	if not multiplayer.is_server() or multiplayer.get_remote_sender_id() != get_multiplayer_authority():
+		return
+	arena.match_mgr.server_handle_monster_hit(self, shot_id, monster_id, headshot, hit_pos)
+
+
 @rpc("any_peer", "reliable")
 func server_hit(shot_id: int, target: String, headshot: bool, hit_pos: Vector3) -> void:
 	if not multiplayer.is_server() or multiplayer.get_remote_sender_id() != get_multiplayer_authority():
@@ -1416,17 +1431,21 @@ func net_shot_fx(origin: Vector3, dir: Vector3, shot_id: int) -> void:
 func server_apply_damage(amount: float, attacker: Player, headshot: bool, weapon := "FERRO", shot_origin := Vector3.INF, hit_pos := Vector3.INF) -> void:
 	if not is_hittable():
 		return
-	_damagers[String(attacker.name)] = true
-	if brain:
-		brain.on_hurt(attacker)
-	arena.match_mgr.server_on_damage(attacker, self, amount)
+	# attacker == null: a monster (zombie mode); `weapon` then names it and `shot_origin` is its position.
+	var aname := String(attacker.name) if attacker else weapon
+	if attacker:
+		_damagers[aname] = true
+		if brain:
+			brain.on_hurt(attacker)
+		arena.match_mgr.server_on_damage(attacker, self, amount)
 	var result := HIT_HEALTH
 	# Where the fatal shot came from and landed (kill cam, floating damage numbers).
 	var org: Vector3 = shot_origin if shot_origin != Vector3.INF else attacker.eye_position()
 	var hp_pos: Vector3 = hit_pos if hit_pos != Vector3.INF else chest_position()
+	var from_pos: Vector3 = attacker.global_position if attacker else org
 	if downed:
 		downed = false
-		net_die.rpc(String(attacker.name), headshot, org, hp_pos, weapon)
+		net_die.rpc(aname, headshot, org, hp_pos, weapon)
 		arena.match_mgr.server_on_finish(self, attacker, weapon)
 		result = HIT_KILL
 	else:
@@ -1436,7 +1455,7 @@ func server_apply_damage(amount: float, attacker: Player, headshot: bool, weapon
 		if absorbed > 0.0:
 			result = HIT_SHIELD_BREAK if shield <= 0.0 else HIT_SHIELD
 		if Game.debug.has("log_items"):
-			print("[DMG] %s -> %s : %d%s  bouclier=%d PV=%d" % [attacker.display_name, display_name, int(amount), " (TÊTE)" if headshot else "", int(shield), int(health)])
+			print("[DMG] %s -> %s : %d%s  bouclier=%d PV=%d" % [attacker.display_name if attacker else weapon, display_name, int(amount), " (TÊTE)" if headshot else "", int(shield), int(health)])
 		if is_channeling():
 			_server_end_all_channels()
 		if health <= 0.0 and Game.instant_kill():
@@ -1444,19 +1463,19 @@ func server_apply_damage(amount: float, attacker: Player, headshot: bool, weapon
 			alive = false
 			downed = false
 			_regen_left = 0.0
-			net_die.rpc(String(attacker.name), headshot, org, hp_pos, weapon)
+			net_die.rpc(aname, headshot, org, hp_pos, weapon)
 			arena.match_mgr.server_on_kill(self, attacker, headshot, _damagers.keys(), weapon)
 			result = HIT_KILL
 		elif health <= 0.0:
 			alive = false
 			downed = true
 			_regen_left = 0.0
-			net_down.rpc(String(attacker.name), org, hp_pos, weapon, headshot)
+			net_down.rpc(aname, org, hp_pos, weapon, headshot)
 			arena.match_mgr.server_on_kill(self, attacker, headshot, _damagers.keys(), weapon)
 			result = HIT_KNOCK
 		else:
-			net_health.rpc(health, shield, attacker.global_position, true)
-	if not attacker.is_bot and attacker != self:
+			net_health.rpc(health, shield, from_pos, true)
+	if attacker and not attacker.is_bot and attacker != self:
 		attacker.net_hit_confirm.rpc_id(attacker.get_multiplayer_authority(), headshot, result, amount, hp_pos, display_name)
 
 
@@ -2022,7 +2041,39 @@ func _debug_mantle_shots() -> void:
 		get_viewport().get_texture().get_image().save_png("%s_%d.png" % [base, i])
 
 
+## --auto_aim in zombie mode: same, against the nearest visible monster.
+func _debug_auto_aim_monsters() -> void:
+	var cam := arena.camera_rig.cam
+	var best: Monster = null
+	var best_d := INF
+	for m: Monster in arena.monsters.alive_list():
+		var pt := m._body_body.global_position
+		if get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(cam.global_position, pt, 1)):
+			continue
+		var d := cam.global_position.distance_to(pt)
+		if d < best_d:
+			best_d = d
+			best = m
+	if best == null:
+		return
+	var dir := (best._body_body.global_position - cam.global_position).normalized()
+	look_yaw = atan2(-dir.x, -dir.z)
+	look_pitch = asin(clampf(dir.y, -1.0, 1.0))
+	aiming = true
+	input.aim = true
+	if not loaded:
+		input.reload = true
+		return
+	var q2 := PhysicsRayQueryParameters3D.create(cam.global_position, cam.global_position - cam.global_basis.z * 300.0, 1 | Hitboxes.LAYER, hitboxes.rids())
+	var h := get_world_3d().direct_space_state.intersect_ray(q2)
+	if h and (h.collider as Node).has_meta("monster") and _now() - _last_fire > 0.3:
+		input.fire = true
+
+
 func _debug_auto_aim() -> void:
+	if arena.monsters:
+		_debug_auto_aim_monsters()
+		return
 	var cam := arena.camera_rig.cam
 	var bone := CharacterRig.bone_name("Head" if str(Game.debug.auto_aim) == "head" else "spine_02")
 	var best: Player = null

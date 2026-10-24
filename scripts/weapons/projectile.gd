@@ -272,6 +272,15 @@ func _impact(hit: Dictionary) -> void:
 	var col: Object = hit.collider
 	global_position = hit.position # the smoke ends on the impact
 	var victim := Hitboxes.player_of(col) as Player
+	if victim == null and col is Node and (col as Node).has_meta("monster"):
+		var mon := (col as Node).get_meta("monster") as Monster
+		FX.flesh_hit(hit.position, hit.normal)
+		if is_instance_valid(mon):
+			mon.rig.hit_flash()
+			if authoritative and is_instance_valid(shooter) and mon.alive:
+				shooter.report_monster_hit(shot_id, mon.id, (col as Node).get_meta("zone") == "head", hit.position)
+		queue_free()
+		return
 	if authoritative and Game.debug.has("log_shots") and debug_pred != "":
 		var got := ("%s/%s" % [victim.display_name, Hitboxes.zone_of(col)]) if victim else "monde"
 		print("[SHOT] #%d visé=%s touché=%s %s dist=%.1f vol=%.3fs %s" % [shot_id, debug_pred, got, str((hit.position as Vector3).snapped(Vector3.ONE * 0.01)), shooter.eye_position().distance_to(hit.position), _t, "OK" if debug_pred.begins_with(got) else "ÉCART"])

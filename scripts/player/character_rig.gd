@@ -645,8 +645,8 @@ var _gun_barrel_rest := Transform3D()
 
 func _build_gun(accent: Color) -> void:
 	var weapon := int(loadout.weapon)
-	_muzzle_z = -0.82 if weapon == 1 else -0.87
-	_stock_back = 0.39 if weapon == 1 else 0.33
+	_muzzle_z = [-0.87, -0.82, -0.84][weapon]
+	_stock_back = [0.33, 0.39, 0.36][weapon]
 	gun = Node3D.new()
 	gun.top_level = true
 	add_child(gun)
@@ -664,9 +664,9 @@ func _build_gun(accent: Color) -> void:
 	else:
 		# Longshot (Meshy AI): long axis is model X (muzzle at -X, stock at +X). Turn it to
 		# the gun frame (forward -Z) and scale it down to rifle size, trigger at the origin.
-		var model := (load(LONGSHOT_SCENE) as PackedScene).instantiate() as Node3D
+		var model := (load(LONGSHOT_SCENE if weapon == 0 else STEAM_SCENE) as PackedScene).instantiate() as Node3D
 		var rot := Basis(Vector3.UP, -PI / 2) * LONGSHOT_SCALE
-		model.transform = Transform3D(rot, -(rot * LONGSHOT_ORIGIN))
+		model.transform = Transform3D(rot, -(rot * (LONGSHOT_ORIGIN if weapon == 0 else STEAM_ORIGIN)))
 		gun.add_child(model)
 		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
@@ -693,6 +693,9 @@ func _build_gun(accent: Color) -> void:
 
 
 const LONGSHOT_SCENE := "res://assets/weapons/longshot.glb"
+## Steam rifle (Meshy AI): same layout as the Longshot, muzzle at model -X, trigger near +0.35.
+const STEAM_SCENE := "res://assets/weapons/steam.glb"
+const STEAM_ORIGIN := Vector3(0.35, 0.075, 0.0)
 const LONGSHOT_SCALE := 0.62
 ## Trigger area in the model's own frame (becomes the gun frame origin, bore axis height).
 const LONGSHOT_ORIGIN := Vector3(0.44, 0.066, 0.0)

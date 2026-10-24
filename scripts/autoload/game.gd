@@ -7,7 +7,7 @@ signal all_peers_ready
 
 const DEFAULT_PORT := 7777
 ## Bump when the network protocol / gameplay changes: mismatched builds are refused.
-const GAME_VERSION := "0.24.0"
+const GAME_VERSION := "0.25.0"
 const MAX_CLIENTS := 19
 ## Biggest team (format 10v10).
 const MAX_TEAM := 10
@@ -22,8 +22,10 @@ const MAPS := [
 const TEAM_NAMES := ["OCRE", "AZUR"]
 ## Game modes (config.mode). Battle royale gives every raider a team index of their own
 ## (colours 2..), so friend / foe checks stay "same team index".
-enum { MODE_TDM, MODE_BR, MODE_PH }
-const MODE_NAMES := ["Élimination par équipes", "Battle royale", "Prop hunt"]
+enum { MODE_TDM, MODE_BR, MODE_PH, MODE_ZOMBIE }
+const MODE_NAMES := ["Élimination par équipes", "Battle royale", "Prop hunt", "Survie zombies"]
+## Zombie survival: team 0 = the survivors, team 1 = the monsters (no players).
+const ZOMBIE_NAMES := ["SURVIVANTS", "MONSTRES"]
 const DIFFICULTY_NAMES := ["Facile", "Normal", "Difficile", "Expert"]
 ## Prop hunt roles: team 0 hunts, team 1 hides.
 const PH_NAMES := ["CHASSEUR", "PROPS"]
@@ -46,14 +48,20 @@ func is_ph() -> bool:
 	return mode() == MODE_PH
 
 
-## Knock-downs and revives only exist in team matches.
+func is_zombie() -> bool:
+	return mode() == MODE_ZOMBIE
+
+
+## Knock-downs and revives only exist in team matches (and against zombies).
 func instant_kill() -> bool:
-	return mode() != MODE_TDM
+	return mode() != MODE_TDM and mode() != MODE_ZOMBIE
 
 
 func team_name(t: int) -> String:
 	if mode() == MODE_PH:
 		return PH_NAMES[clampi(t, 0, 1)]
+	if mode() == MODE_ZOMBIE:
+		return ZOMBIE_NAMES[clampi(t, 0, 1)]
 	if t < 2:
 		return TEAM_NAMES[t]
 	return "SOLO"
@@ -284,7 +292,7 @@ func _load_settings() -> void:
 	config.team_size = cfg.get_value("match", "team_size", config.team_size)
 	config.rounds_to_win = cfg.get_value("match", "rounds_to_win", config.rounds_to_win)
 	config.map = cfg.get_value("match", "map", config.map)
-	config.mode = clampi(int(cfg.get_value("match", "mode", config.mode)), 0, 2)
+	config.mode = clampi(int(cfg.get_value("match", "mode", config.mode)), 0, MODE_NAMES.size() - 1)
 	config.difficulty = clampi(int(cfg.get_value("match", "difficulty", config.difficulty)), 0, 3)
 	config.br_bots = clampi(int(cfg.get_value("match", "br_bots", config.br_bots)), 0, 19)
 	config.team_size = clampi(int(config.team_size), 1, MAX_TEAM)
@@ -421,7 +429,7 @@ func _parse_cmdline() -> void:
 			loadout[k] = int(debug[k])
 	# --mode=tdm|br|ph  --difficulty=0..3  --br_bots=N  (tests)
 	if debug.has("mode"):
-		config.mode = {"tdm": 0, "br": 1, "ph": 2}.get(str(debug.mode), int(str(debug.mode)) if str(debug.mode).is_valid_int() else 0)
+		config.mode = {"tdm": 0, "br": 1, "ph": 2, "zombie": 3}.get(str(debug.mode), int(str(debug.mode)) if str(debug.mode).is_valid_int() else 0)
 	if debug.has("difficulty"):
 		config.difficulty = clampi(int(debug.difficulty), 0, 3)
 	if debug.has("br_bots"):

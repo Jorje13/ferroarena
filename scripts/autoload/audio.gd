@@ -36,7 +36,47 @@ func _ready() -> void:
 	_make_big_bore()
 	_make_feedback()
 	_make_blast_layers()
+	_make_monsters()
 	_load_files()
+
+
+## Zombie-mode monsters: growl (rough, wavering low voice), claw swipe, screech (rising
+## shriek), ground slam and death rattle (falling growl).
+func _make_monsters() -> void:
+	streams["mon_growl"] = _wav(_voice(0.9, 70.0, 55.0, 0.55, 3.0))
+	streams["mon_death"] = _wav(_voice(1.3, 95.0, -50.0, 0.6, 2.0))
+	streams["mon_screech"] = _wav(_voice(0.7, 360.0, 520.0, 0.5, 5.0))
+	var s := _buf(0.35)
+	var lp := 0.0
+	for i in s.size():
+		var t := float(i) / RATE
+		lp += (_rng.randf_range(-1.0, 1.0) - lp) * 0.5
+		s[i] = (_rng.randf_range(-1.0, 1.0) - lp) * sin(PI * clampf(t / 0.35, 0.0, 1.0)) * 0.55
+	streams["mon_swipe"] = _wav(s)
+	s = _buf(0.7)
+	_thud_at(s, 0.0, 48.0, 1.0, 0.1)
+	_thud_at(s, 0.05, 90.0, 0.5, 0.06)
+	_friction(s, 0.02, 0.4, 0.4, 0.25)
+	streams["mon_slam"] = _wav(s)
+
+
+## Rough "voice": sawtooth with vibrato and noisy growl, pitch gliding by `glide` Hz over `dur`.
+func _voice(dur: float, f0: float, glide: float, amp: float, rough: float) -> PackedFloat32Array:
+	var s := _buf(dur)
+	var ph := 0.0
+	var lp := 0.0
+	for i in s.size():
+		var t := float(i) / RATE
+		var u := t / dur
+		var f := f0 + glide * u + 6.0 * sin(TAU * 6.0 * t)
+		ph = fmod(ph + f / RATE, 1.0)
+		var saw := ph * 2.0 - 1.0
+		# Amplitude flutter gives the growl its rasp.
+		var flutter := 0.65 + 0.35 * sin(TAU * (28.0 + rough * 6.0) * t)
+		lp += (saw - lp) * 0.25
+		var env := minf(t * 14.0, 1.0) * (1.0 - smoothstep(0.6, 1.0, u))
+		s[i] = (lp * 0.9 + _rng.randf_range(-1.0, 1.0) * 0.12 * rough) * flutter * env * amp
+	return s
 
 
 ## Big-bore report layers for the Ferro:
