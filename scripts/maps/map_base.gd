@@ -625,6 +625,23 @@ func add_cylinder_collider(parent: Node3D, pos: Vector3, radius: float, height: 
 	parent.add_child(body)
 
 
+## A cone-shaped (convex) collider: base radius `r` at height `y0`, apex at `y1`. Foliage
+## stops bullets and sight; it starts above head height so nobody bumps into it.
+func add_cone_collider(parent: Node3D, r: float, y0: float, y1: float, sides := 10) -> void:
+	var pts := PackedVector3Array()
+	for i in sides:
+		var a := TAU * i / sides
+		pts.append(Vector3(cos(a) * r, y0, sin(a) * r))
+	pts.append(Vector3(0, y1, 0))
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var sh := ConvexPolygonShape3D.new()
+	sh.points = pts
+	cs.shape = sh
+	body.add_child(cs)
+	parent.add_child(body)
+
+
 func make_root(p: Vector2, yaw: float, sink := 0.0) -> Node3D:
 	var root := Node3D.new()
 	props_root.add_child(root)
@@ -1212,7 +1229,8 @@ func add_cypress(p: Vector2, h: float) -> void:
 	add_mesh(root, Transform3D(Basis().scaled(Vector3(1, h * 0.8 / 6.0, 1)), Vector3(0, h * 0.5 + 0.6, 0)), core, Mats.foliage("cypress_core", Color(0.08, 0.11, 0.05)))
 	var canopy := Mats.canopy_mesh(100 + rng.randi_range(0, 3), Vector3(r0, h * 0.47, r0), 110, 0.75)
 	add_mesh(root, Transform3D(Basis(), Vector3(0, h * 0.5 + 0.7, 0)), canopy, Mats.leaves("cypress", Color(0.32, 0.42, 0.2)))
-	add_cylinder_collider(root, Vector3(0, 1.5, 0), 0.25, 3.0)
+	add_cylinder_collider(root, Vector3(0, h * 0.5, 0), 0.3, h)
+	add_cone_collider(root, r0 * 0.8, 2.4, h * 0.97 + 0.7)
 
 
 func add_pine(p: Vector2, h: float) -> void:
@@ -1240,7 +1258,8 @@ func add_pine(p: Vector2, h: float) -> void:
 		var rad := Vector3(rng.randf_range(1.8, 2.5), rng.randf_range(0.7, 0.95), rng.randf_range(1.8, 2.5))
 		add_mesh(root, Transform3D(Basis().scaled(rad * 0.7), top + o), sphere, core)
 		add_mesh(root, Transform3D(Basis(Vector3.UP, rng.randf() * TAU), top + o), Mats.canopy_mesh(200 + rng.randi_range(0, 3), Vector3(2.2, 0.85, 2.2), 55, 0.85), leaves)
-	add_cylinder_collider(root, Vector3(0, 1.5, 0), 0.3, 3.0)
+	add_cylinder_collider(root, Vector3(0, h * 0.5, 0), 0.3, h)
+	add_cylinder_collider(root, top + Vector3(0, 0.3, 0), 2.3, 2.2)
 
 
 func add_fir(p: Vector2, h: float, snowy := true) -> void:
@@ -1272,7 +1291,9 @@ func add_fir(p: Vector2, h: float, snowy := true) -> void:
 			cap.height = cone.height * 0.55
 			cap.radial_segments = 10
 			add_mesh(root, Transform3D(Basis(), Vector3(0, y + cone.height * 0.24, 0)), cap, snow)
-	add_cylinder_collider(root, Vector3(0, 1.5, 0), 0.3, 3.0)
+	add_cylinder_collider(root, Vector3(0, h * 0.25, 0), 0.3, h * 0.5)
+	var base_y := maxf(h * 0.2, 2.3)
+	add_cone_collider(root, lerpf(2.2, 0.6, 0.0) * h / 12.0 * 1.4 * 0.85, base_y, h * 1.02)
 
 
 func add_bush(p: Vector2, s: float, color := Color(0.22, 0.27, 0.13)) -> void:
@@ -1379,7 +1400,7 @@ func add_fence(a: Vector2, b: Vector2) -> void:
 	for i in n:
 		var p := a + dir * ((i + 0.5) / n)
 		var root := make_root(p, yaw, 0.05)
-		Scan.place(root, "modular_chainlink_fence", Transform3D(Basis().scaled(Vector3(length / n / seg, 1, 1)), Vector3.ZERO), "modular_chainlink_fence_double$", "box", 4)
+		Scan.place(root, "modular_chainlink_fence", Transform3D(Basis().scaled(Vector3(length / n / seg, 1, 1)), Vector3.ZERO), "modular_chainlink_fence_double$", "box", 5)
 		var post_p := a + dir * (float(i) / n)
 		Scan.place(make_root(post_p, yaw, 0.05), "modular_chainlink_fence", Transform3D(), "modular_chainlink_fence_post$", "none")
 	Scan.place(make_root(b, yaw, 0.05), "modular_chainlink_fence", Transform3D(), "modular_chainlink_fence_post$", "none")

@@ -206,6 +206,10 @@ var disguised := false
 var _prop_node: Node3D
 ## Shouldering the rifle blades the upper body (left shoulder forward), head kept on target.
 var blade := 0.0
+## Which shoulder carries the rifle: 0 = right, 1 = left, eased over ~0.15 s (see update_pose).
+var shoulder_k := 0.0
+var _sw_raw := 0.0
+var _pouch_r := Vector3.ZERO
 const BLADE_AIM := 0.55
 const TORSO_TWIST_MAX := 1.2
 var _recoil := 0.0
@@ -831,7 +835,9 @@ func update_preview(delta: float) -> void:
 	_aim = 1.0 if pose == "aim" else 0.0
 	_sprint = 1.0 if pose == "sprint" else 0.0
 	_sling = 0.0
-	blade = BLADE_AIM * _aim
+	_sw_raw = 1.0 if Game.debug.has("prev_left") else 0.0
+	shoulder_k = _sw_raw
+	blade = BLADE_AIM * _aim * (1.0 - 2.0 * shoulder_k)
 	arm_w = 1.0
 	hip_yaw = 0.0
 	spine_pitch = 0.0
@@ -1086,7 +1092,10 @@ func update_pose(p: Player, delta: float) -> void:
 	if p.alive and not p.downed and not rolling and not mantling and not sliding and not p.sprinting and p.grounded():
 		want_twist = clampf(angle_difference(p.visual_yaw(), p.look_yaw), -TORSO_TWIST_MAX, TORSO_TWIST_MAX)
 	torso_twist = lerpf(torso_twist, want_twist, 1.0 - exp(-delta * 18.0))
-	blade = lerpf(blade, BLADE_AIM * _aim * (1.0 - _sling) if p.alive and not p.downed else 0.0, 1.0 - exp(-delta * 14.0))
+	# Left shoulder: the whole posture is mirrored. Snappy but not a pop: ~0.15 s, eased.
+	_sw_raw = move_toward(_sw_raw, 1.0 if p.shoulder_left else 0.0, delta / 0.16)
+	shoulder_k = smoothstep(0.0, 1.0, _sw_raw)
+	blade = lerpf(blade, BLADE_AIM * _aim * (1.0 - _sling) * (1.0 - 2.0 * shoulder_k) if p.alive and not p.downed else 0.0, 1.0 - exp(-delta * 14.0))
 	_loco_pos = _loco_pos.lerp(lv.limit_length(7.0), 1.0 - exp(-delta * 10.0))
 	anim.set("parameters/loco/blend_position", _loco_pos)
 	_move_w = lerpf(_move_w, smoothstep(0.15, 1.1, speed), 1.0 - exp(-delta * 24.0))
@@ -1143,7 +1152,16 @@ func gun_transform(chest: Vector3) -> Transform3D:
 	else:
 		barrel_pivot.rotation.x = 0.0
 	_sync_gun_barrel()
+	if shoulder_k > 0.0:
+		# Mirror image of the pose about the body's centre plane, with a little lift on the way
+		# across so the rifle swings over the chest instead of through it.
+		var mx := Basis.from_scale(Vector3(-1, 1, 1))
+		var gm := Transform3D(mx * gx.basis * mx, mx * gx.origin)
+		gx = gx.interpolate_with(gm, shoulder_k)
+		var arc := sin(PI * shoulder_k)
+		gx.origin += Vector3(0.0, 0.12 * arc, -0.07 * arc)
 	_pouch_s = chest + FLIP * Vector3(-0.12, -0.25, -0.12)
+	_pouch_r = chest + FLIP * Vector3(0.12, -0.25, -0.12)
 	# The rifle rides with the twisted upper body.
 	return Transform3D(FLIP, chest) * Transform3D(Basis(Vector3.UP, torso_twist), Vector3.ZERO) * gx
 
@@ -1157,23 +1175,47 @@ const PALM_SHARE := 0.55
 var _palm_len := 0.09
 
 
-## Global finger direction of hand 0 = right, 1 = left.
+static func _flipx(v: Vector3) -> Vector3:
+	return Vector3(-v.x, v.y, v.z)
+
+
+## Global finger direction of hand 0 = right, 1 = left. On the left shoulder the roles swap
+## (the left hand takes the pistol grip) and the directions are mirrored.
 func hand_dir(i: int) -> Vector3:
-	return (gun.global_basis * (HAND_DIR_R if i == 0 else HAND_DIR_L)).normalized()
+	var local: Vector3
+	if i == 0:
+		local = HAND_DIR_R.lerp(_flipx(HAND_DIR_L), shoulder_k)
+	else:
+		local = HAND_DIR_L.lerp(_flipx(HAND_DIR_R), shoulder_k)
+	return (gun.global_basis * local).normalized()
+
+
+## Palm centre of the trigger hand and of the supporting hand (global).
+func _trigger_point() -> Vector3:
+	return grip_r.global_position
+
+
+func _support_point(i: int) -> Vector3:
+	var t := grip_l.global_position
+	if _reload_k >= 0.0:
+		# Reloading: the supporting hand dips to the ammo pouch on its own side.
+		var mid := clampf(sin(_reload_k * PI) * 1.6, 0.0, 1.0)
+		t = t.lerp(skeleton.global_transform * (_pouch_s if i == 1 else _pouch_r), mid)
+	return t
 
 
 ## Where the palm centre must sit (global): on the grip.
 func grip_point(i: int) -> Vector3:
-	var t := grip_r.global_position if i == 0 else grip_l.global_position
-	if i == 1 and _reload_k >= 0.0:
-		var mid := clampf(sin(_reload_k * PI) * 1.6, 0.0, 1.0)
-		t = t.lerp(skeleton.global_transform * _pouch_s, mid)
-	return t
+	if i == 0:
+		return _trigger_point().lerp(_support_point(0), shoulder_k)
+	return _support_point(1).lerp(_trigger_point(), shoulder_k)
 
 
 ## Point the fingertips close in on: just past the far side of the grip, so the fingers wrap it.
 func grip_wrap(i: int) -> Vector3:
-	var off := Vector3(-0.03, 0.0, -0.01) if i == 0 else Vector3(0.05, 0.05, 0.0)
+	var trig := Vector3(-0.03, 0.0, -0.01)
+	var supp := Vector3(0.05, 0.05, 0.0)
+	var off: Vector3 = trig.lerp(_flipx(supp), shoulder_k) if i == 0 else supp.lerp(_flipx(trig), shoulder_k)
 	return grip_point(i) + gun.global_basis * off
 
 

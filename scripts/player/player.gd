@@ -381,29 +381,29 @@ var fire_blocked := 0.0
 
 
 func _update_fire_blocked(delta: float) -> void:
-	var want := 0.0
+	var want := false
 	var rig_cam := arena.camera_rig
 	if alive and held_item() == "" and rig_cam and rig_cam.target == self and not rig_cam.kill_cam_active() and not Game.debug.has("cam_at"):
-		var space := get_world_3d().direct_space_state
-		var cam := rig_cam.cam
-		var cdir := -cam.global_basis.z
-		var eye := eye_position()
-		var start := cam.global_position + cdir * maxf((eye - cam.global_position).dot(cdir), 0.0)
-		var h := space.intersect_ray(PhysicsRayQueryParameters3D.create(start, start + cdir * 150.0, 1))
-		var target: Vector3 = h.position if h else start + cdir * 150.0
-		var origin := _shot_origin(eye, start, space)
-		var to := target - origin
-		var d := to.length()
+		# Exactly the shot that would leave now (same origin, same direction, no spread):
+		# blocked if the world stops it before the point under the crosshair.
+		var aim := _compute_aim(false)
+		var origin: Vector3 = aim.origin
+		var dir: Vector3 = aim.dir
+		var d: float = aim.dist
 		if d > 0.05:
-			var e := space.intersect_ray(PhysicsRayQueryParameters3D.create(origin, origin + to / d * maxf(d - 0.1, 0.0), 1))
-			if e and origin.distance_to(e.position) < d - 0.5:
-				want = 1.0 # something stands between the muzzle and the aimed point
-			elif h and d < 1.8 and h.normal.y < 0.7:
-				want = 1.0 # nose against a wall
+			var q := PhysicsRayQueryParameters3D.create(origin, origin + dir * d, 1)
+			var e := get_world_3d().direct_space_state.intersect_ray(q)
+			if e and origin.distance_to(e.position) < d - 0.2:
+				want = true # something stands between the muzzle and the aimed point
+			elif d < 1.8 and not aim.hit_normal.is_equal_approx(Vector3.ZERO) and aim.hit_normal.y < 0.7:
+				want = true # nose against a wall
 	if Game.debug.has("force_blocked"):
-		want = 1.0 # debug: preview the warning on the sights
-	fire_blocked = move_toward(fire_blocked, want, delta * 9.0)
-
+		want = true # debug: preview the warning on the sights
+	# Snaps on the moment the shot would hit the wall, fades out a little slower.
+	if want:
+		fire_blocked = 1.0
+	else:
+		fire_blocked = move_toward(fire_blocked, 0.0, delta * 14.0)
 
 ## Where a shot starts for the camera-aimed player: on the crosshair line at eye depth
 ## (what you see past a corner is what you hit), as long as nothing solid lies between
@@ -1302,19 +1302,21 @@ func _fire() -> void:
 
 ## Where the bullet starts (eye height) and its direction. For the local human
 ## the direction converges on what's under the crosshair.
-func _compute_aim() -> Dictionary:
+func _compute_aim(with_spread := true) -> Dictionary:
 	var eye := eye_position()
 	var space := get_world_3d().direct_space_state
 	var excl: Array[RID] = hitboxes.rids()
 	var aim_point: Vector3
 	var origin := eye
+	var hit_normal := Vector3.ZERO
 	var rig_cam: CameraRig = arena.camera_rig
 	if not is_bot and rig_cam and rig_cam.target == self:
 		var cam := rig_cam.cam
-		var cdir := _apply_spread(-cam.global_basis.z)
+		var cdir := _apply_spread(-cam.global_basis.z) if with_spread else -cam.global_basis.z
 		var start := cam.global_position + cdir * maxf((eye - cam.global_position).dot(cdir), 0.0)
 		var q := PhysicsRayQueryParameters3D.create(start, start + cdir * FIRE_RANGE, 1 | Hitboxes.LAYER, excl)
 		var h := space.intersect_ray(q)
+		hit_normal = h.normal if h else Vector3.ZERO
 		aim_point = h.position if h else start + cdir * FIRE_RANGE
 		origin = _shot_origin(eye, start, space)
 		if Game.debug.has("log_shots"):
@@ -1324,13 +1326,13 @@ func _compute_aim() -> Dictionary:
 				_dbg_pred += " (cible à %.1f m/s, impact visé %s)" % [Vector3(pv.velocity.x, 0, pv.velocity.z).length(), str(h.position.snapped(Vector3.ONE * 0.01))]
 	else:
 		aim_point = eye + _apply_spread(look_direction()) * FIRE_RANGE
-		return {"origin": eye, "dir": (aim_point - eye).normalized()}
+		return {"origin": eye, "dir": (aim_point - eye).normalized(), "dist": eye.distance_to(aim_point), "hit_normal": Vector3.ZERO}
 	# Zeroed on the crosshair: aim above it by the drop over the flight, so the
 	# slug lands exactly where the crosshair ray hit (bots lead/zero themselves).
 	var dist := origin.distance_to(aim_point)
 	var tof := dist / Projectile.SPEED
 	aim_point.y += 0.5 * Projectile.GRAVITY * tof * tof
-	return {"origin": origin, "dir": (aim_point - origin).normalized()}
+	return {"origin": origin, "dir": (aim_point - origin).normalized(), "dist": dist, "hit_normal": hit_normal}
 
 
 func _apply_spread(dir: Vector3) -> Vector3:

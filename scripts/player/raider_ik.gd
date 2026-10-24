@@ -108,8 +108,8 @@ func _modify() -> void:
 	var tr: Vector3 = inv * rig.hand_target(0)
 	var tl: Vector3 = inv * rig.hand_target(1)
 	var fwd: Vector3 = (gun_s.basis * Vector3.FORWARD).normalized()
-	_arm(sk, "r", tr, Vector3(-0.6, -0.5, -0.3), (inv.basis * rig.hand_dir(0)).normalized(), -1.0, 0.0)
-	_arm(sk, "l", tl, Vector3(0.22, -0.8, -0.3), (inv.basis * rig.hand_dir(1)).normalized(), -1.0, 0.0)
+	_arm(sk, "r", tr, Vector3(-0.6, -0.5, -0.3).lerp(Vector3(-0.22, -0.8, -0.3), rig.shoulder_k), (inv.basis * rig.hand_dir(0)).normalized(), -1.0, 0.0)
+	_arm(sk, "l", tl, Vector3(0.22, -0.8, -0.3).lerp(Vector3(0.6, -0.5, -0.3), rig.shoulder_k), (inv.basis * rig.hand_dir(1)).normalized(), -1.0, 0.0)
 	_grip(sk, "r", inv * rig.grip_wrap(0), rig.arm_w)
 	_grip(sk, "l", inv * rig.grip_wrap(1), rig.arm_w)
 	# 5. Vault: hands planted flat on the obstacle's top (right hand = first point).
@@ -237,7 +237,9 @@ func _grip(sk: Skeleton3D, side: String, target: Vector3, w: float) -> void:
 		return
 	if "%d%s" % [rig.skin, side] in RIGID_HANDS:
 		return
-	var curl: Dictionary = CURL_R if side == "r" else CURL_L
+	# The trigger hand curls like a pistol grip, the other like a hand-guard (roles swap with the shoulder).
+	var trigger_hand := (side == "r") == (rig.shoulder_k < 0.5)
+	var curl: Dictionary = CURL_R if trigger_hand else CURL_L
 	var h0 := sk.get_bone_global_pose(hd)
 	var f := _finger_axis(sk, side, h0)
 	# Roll search: full circle the first time, then around the last answer.
