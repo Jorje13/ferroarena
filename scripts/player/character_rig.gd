@@ -14,6 +14,7 @@ const BONES := {
 	"upperarm_r": "mixamorig_RightArm", "lowerarm_r": "mixamorig_RightForeArm", "hand_r": "mixamorig_RightHand",
 	"thigh_l": "mixamorig_LeftUpLeg", "calf_l": "mixamorig_LeftLeg", "foot_l": "mixamorig_LeftFoot",
 	"thigh_r": "mixamorig_RightUpLeg", "calf_r": "mixamorig_RightLeg", "foot_r": "mixamorig_RightFoot",
+	"clavicle_l": "mixamorig_LeftShoulder", "clavicle_r": "mixamorig_RightShoulder",
 }
 
 
@@ -96,6 +97,9 @@ func setup(p_team: int, p_name: String, p_loadout: Dictionary = {}) -> void:
 
 	_build_gun(accent)
 	_torso = _torso_profile(skin, model, skeleton)
+	var ua := skeleton.get_bone_global_rest(skeleton.find_bone(bone_name("upperarm_r"))).origin
+	var la := skeleton.get_bone_global_rest(skeleton.find_bone(bone_name("lowerarm_r"))).origin
+	_arm_len = ua.distance_to(la) + la.distance_to(skeleton.get_bone_global_rest(skeleton.find_bone(bone_name("hand_r"))).origin)
 	_chest_rest_inv = skeleton.get_bone_global_rest(skeleton.find_bone(bone_name("spine_03"))).basis.orthonormalized().inverse()
 	_build_hand_items()
 	_merge_static_meshes()
@@ -310,6 +314,11 @@ static func _bake_library() -> AnimationLibrary:
 
 
 static var _skin_libs := {}
+
+
+## Launch screen: builds the animation library of body `skin` ahead of time (0 = the baked base).
+static func warm_up(skin: int) -> void:
+	_skin_library(skin)
 
 
 ## The baked clips the tree plays, for one skin: the trooper's own, or a retargeted copy
@@ -649,14 +658,17 @@ var _gun_barrel_rest := Transform3D()
 
 func _build_gun(accent: Color) -> void:
 	var weapon := int(loadout.weapon)
-	_muzzle_z = [-0.87, -0.82, -0.84][weapon]
-	_stock_back = [0.33, 0.39, 0.36][weapon]
-	_butt_y = [-0.075, -0.085, -0.13][weapon]
+	pistol = weapon == PISTOL
+	_muzzle_z = [-0.87, -0.82, -0.84, -0.45][weapon]
+	_stock_back = [0.33, 0.39, 0.36, 0.06][weapon]
+	_butt_y = [-0.075, -0.085, -0.13, -0.05][weapon]
 	# Anti-clip probes (gun frame): butt plate top / centre, comb, grip, fore-end.
 	var by := _butt_y
 	# (The butt toe may dig into the pec a little, as a real one does.)
 	_clip_pts = [Vector3(0, -0.02, _stock_back), Vector3(0, by, _stock_back - 0.01), Vector3(0, -0.02, _stock_back * 0.5),
 		Vector3(0, -0.06, 0.0), Vector3(0, -0.03, -0.25), Vector3(0, -0.02, -0.5)]
+	if pistol:
+		_clip_pts = [Vector3(0, -0.06, 0.05), Vector3(0, 0.0, -0.15), Vector3(0, 0.0, -0.3)]
 	gun = Node3D.new()
 	gun.top_level = true
 	add_child(gun)
@@ -671,6 +683,16 @@ func _build_gun(accent: Color) -> void:
 		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		hinge = GUN_MODEL_XF * _gun_barrel_rest.origin
+	elif pistol:
+		# Revolver (Meshy AI): laid out like the Longshot (muzzle at model -X, grip at +X). Its mesh
+		# is very dense: a coarser LOD is forced (it is never seen big).
+		var model := (load(PISTOL_SCENE) as PackedScene).instantiate() as Node3D
+		var rot := Basis(Vector3.UP, -PI / 2) * PISTOL_SCALE
+		model.transform = Transform3D(rot, -(rot * PISTOL_ORIGIN))
+		gun.add_child(model)
+		for mi: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.lod_bias = 0.15
 	else:
 		# Longshot (Meshy AI): long axis is model X (muzzle at -X, stock at +X). Turn it to
 		# the gun frame (forward -Z) and scale it down to rifle size, trigger at the origin.
@@ -690,19 +712,43 @@ func _build_gun(accent: Color) -> void:
 	barrel_pivot.add_child(b)
 	_gun_barrels = b
 	# Team-coloured bead near the muzzle (readable from afar).
-	_mesh(b, Shapes.rounded_box(Vector3(0.006, 0.01, 0.012), 0.002), Mats.emissive("sight%d" % team, accent, 2.0, false), Vector3(0, 0.0, -0.78) if weapon == 1 else Vector3(0, 0.045, -0.62))
+	_mesh(b, Shapes.rounded_box(Vector3(0.006, 0.01, 0.012), 0.002), Mats.emissive("sight%d" % team, accent, 2.0, false), Vector3(0, 0.0, -0.78) if weapon == 1 else (Vector3(0, 0.016, -0.44) if pistol else Vector3(0, 0.045, -0.62)))
+	# Weapon light, lit at night (zombie survival); cone along the barrel.
+	torch = SpotLight3D.new()
+	torch.light_color = Color(1.0, 0.95, 0.85)
+	torch.light_energy = 0.0
+	torch.spot_range = 32.0
+	torch.spot_angle = 22.0
+	torch.spot_attenuation = 0.8
+	torch.position = Vector3(0.035, -0.03, _muzzle_z * 0.5)
+	torch.visible = false
+	gun.add_child(torch)
 	muzzle = Node3D.new()
 	muzzle.position = Vector3(0, -0.02 if weapon == 1 else 0.0, _muzzle_z)
 	b.add_child(muzzle)
 	grip_r = Node3D.new()
-	grip_r.position = Vector3(0, -0.095, 0.085) if weapon == 1 else LONGSHOT_GRIP_R
+	grip_r.position = Vector3(0, -0.095, 0.085) if weapon == 1 else (PISTOL_GRIP_R if pistol else LONGSHOT_GRIP_R)
 	gun.add_child(grip_r)
 	grip_l = Node3D.new()
-	grip_l.position = Vector3(0, -0.07, -0.22) if weapon == 1 else LONGSHOT_GRIP_L
+	grip_l.position = Vector3(0, -0.07, -0.22) if weapon == 1 else (PISTOL_GRIP_L if pistol else LONGSHOT_GRIP_L)
 	_grip_l_z = grip_l.position.z
 	b.add_child(grip_l)
 
 
+## Weapon 3: long-barrelled revolver, held two-handed in front of the face (no stock).
+const PISTOL := 3
+const PISTOL_SCENE := "res://assets/weapons/pistol.glb"
+const PISTOL_SCALE := 0.3
+## Above the trigger, on the bore axis, in the model's own frame.
+const PISTOL_ORIGIN := Vector3(0.55, 0.128, 0.0)
+const PISTOL_GRIP_R := Vector3(0, -0.068, 0.065)
+## The support hand cups the gun hand from below and the left.
+const PISTOL_GRIP_L := Vector3(0, -0.095, 0.045)
+var pistol := false
+## Weapon light (see _build_gun), driven by the map's night amount in update_pose.
+var torch: SpotLight3D
+## Shoulder -> wrist length (m) of this body, for the pistol's two-handed hold.
+var _arm_len := 0.54
 const LONGSHOT_SCENE := "res://assets/weapons/longshot.glb"
 ## Steam rifle (Meshy AI): same layout as the Longshot, muzzle at model -X, trigger near +0.35.
 const STEAM_SCENE := "res://assets/weapons/steam.glb"
@@ -722,6 +768,8 @@ const SUPPORT_SLIDE_MAX := 0.13
 
 
 func set_support_slide(s: float) -> void:
+	if pistol:
+		return
 	grip_l.position.z = _grip_l_z + s
 
 var _gun_barrels: Node3D
@@ -764,7 +812,7 @@ func set_attachments(silencer: bool, stock: bool) -> void:
 		_mesh(_stock_pad, Shapes.rounded_box(Vector3(0.058, 0.012, 0.2), 0.004), Mats.emissive("stock_strip", Items.ATTACHMENTS.stock.color, 1.2, false), Vector3(0, 0.063, 0.24))
 		gun.add_child(_stock_pad)
 	if _stock_pad:
-		_stock_pad.visible = stock
+		_stock_pad.visible = stock and not pistol
 
 
 ## Mirrors barrel_pivot's break angle onto the IZH barrel bone.
@@ -977,9 +1025,57 @@ func flinch() -> void:
 	_suit.set_shader_parameter("flash", 0.25)
 
 
+## Level of detail of the procedural layer (RaiderIK): 2 = everything, 1 = no finger grip
+## (far or off-screen), 0 = rifle placed but no arm IK (far AND off-screen).
+var detail := 2
+const DETAIL_NEAR := 25.0
+const DETAIL_FAR := 60.0
+
+
+var _anim_dt := 0.0
+var _anim_tick := 0
+
+
+## In a match the animation tree is advanced by hand: every frame up close, every 2nd frame
+## far or off-screen, every 4th when both (the time is accumulated, so nothing slows down).
+## The menu's turntable keeps the tree's own processing (update_preview).
+func _step_anim(delta: float) -> void:
+	if anim.callback_mode_process != AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL:
+		anim.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	_anim_dt += delta
+	_anim_tick += 1
+	var every: int = [4, 2, 1][detail]
+	if _anim_tick >= every:
+		anim.advance(_anim_dt)
+		_anim_dt = 0.0
+		_anim_tick = 0
+
+
+func _update_detail() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		detail = 2
+		return
+	var at := global_position + Vector3(0, 1.0, 0)
+	var d := cam.global_position.distance_to(at)
+	var seen := cam.is_position_in_frustum(at)
+	detail = 2 if seen and d < DETAIL_NEAR else (1 if seen or d < DETAIL_FAR else 0)
+	# Debug: --force_detail=0|1|2 (check the low levels up close).
+	if Game.debug.has("force_detail"):
+		detail = int(Game.debug.force_detail)
+
+
 ## Called every rendered frame by Player.
 func update_pose(p: Player, delta: float) -> void:
 	rotation.y = p.visual_yaw()
+	_update_detail()
+	_step_anim(delta)
+	var dark: float = p.arena.map.night if p.arena and p.arena.map else 0.0
+	torch.visible = dark > 0.05 and p.alive and gun.visible
+	if torch.visible:
+		torch.light_energy = 3.5 * dark
+		# Shadows only from the light you look through (cost).
+		torch.shadow_enabled = p.is_local_human()
 	_step_recoil(delta)
 	var hv := Vector3(p.velocity.x, 0, p.velocity.z)
 	var speed := hv.length()
@@ -1203,10 +1299,23 @@ func gun_transform(chest: Transform3D) -> Transform3D:
 	var pb := Basis(Vector3.UP, _sway.x) * Basis(Vector3.RIGHT, _pitch + _sway.y)
 	var aimed := Transform3D(pb, _anchor(outer_inv, pk) - pb * butt)
 	var r_ready := Basis.from_euler(Vector3(-0.42 + _sway.y, 0.62 + _sway.x, 0.18))
-	var ready := Transform3D(r_ready, _anchor(outer_inv, pk + Vector3(0, -0.07, 0.03)) - r_ready * butt)
+	var ready := Transform3D(r_ready, _anchor(outer_inv, pk + Vector3(0, -0.08, -0.02)) - r_ready * butt)
 	var r_sprint := Basis.from_euler(Vector3(-0.4 + _sway.y, 0.75 + _sway.x, 0.45))
-	var sprint := Transform3D(r_sprint, _anchor(outer_inv, pk + Vector3(0, -0.05, 0.04)) - r_sprint * butt)
+	var sprint := Transform3D(r_sprint, _anchor(outer_inv, pk + Vector3(0, -0.05, 0.0)) - r_sprint * butt)
 	var slung := Transform3D(Basis.from_euler(Vector3(1.2, 0.0, 0.9)), Vector3(0.0, 0.05, 0.32))
+	if pistol:
+		# Two-handed hold, no stock: aimed at eye height out in front, low ready muzzle down in
+		# front of the chest, tucked in for the sprint, holstered on the right thigh.
+		# Distances follow the body: shoulder height and arm length (short-armed bodies hold it closer).
+		# Measured from the head (gx space, -Z forward): the sights at eye level, below the chin
+		# at low ready, tucked in for the sprint.
+		var reach := _arm_len
+		var head := outer_inv * skeleton.get_bone_global_pose(skeleton.find_bone(bone_name("Head"))).origin
+		var hx := head.x * (1.0 - 2.0 * shoulder_k)
+		aimed = Transform3D(pb, Vector3(hx + 0.03, head.y - 0.06, head.z - 0.92 * reach).lerp(Vector3(-hx - 0.03, head.y - 0.06, head.z - 0.92 * reach), shoulder_k))
+		ready = Transform3D(Basis.from_euler(Vector3(-0.75 + _sway.y, 0.2 + _sway.x, 0.0)), Vector3(0.05, head.y - 0.38, head.z - 0.6 * reach))
+		sprint = Transform3D(Basis.from_euler(Vector3(-1.05 + _sway.y, 0.3 + _sway.x, 0.0)), Vector3(0.06, head.y - 0.42, head.z - 0.46 * reach))
+		slung = Transform3D(Basis.from_euler(Vector3(-PI / 2, 0.0, 0.0)), Vector3(0.21, -0.42, 0.02))
 	var gx := ready.interpolate_with(aimed, _aim)
 	gx = gx.interpolate_with(sprint, _sprint * (1.0 - _aim))
 	gx = gx.interpolate_with(slung, _sling)
@@ -1249,8 +1358,11 @@ func _anchor(outer_inv: Transform3D, local: Vector3) -> Vector3:
 ## forward, -X right) on a TORSO_CELL grid, and the right shoulder pocket for the butt plate.
 const TORSO_CELL := 0.02
 const TORSO_BONES := ["Hips", "Spine", "Spine1", "Spine2", "Neck", "LeftShoulder", "RightShoulder"]
-## Gap kept between the rifle and the chest surface (jacket folds, breathing).
-const CLIP_MARGIN := 0.015
+## Gap kept between the rifle and the chest surface (negative: may sink that much into the clothing).
+const CLIP_MARGIN := -0.03
+## How far the butt plate sits into the measured chest front (padding, compressed shoulder).
+const POCKET_SINK := 0.025
+const POCKET_MAX_AHEAD := 0.1
 static var _torso_cache := {}
 var _torso := {"grid": {}, "pocket": Vector3(-0.13, 0.06, 0.16)}
 var _chest_frame := Transform3D()
@@ -1308,7 +1420,11 @@ static func _torso_profile(p_skin: int, body: Node3D, sk: Skeleton3D) -> Diction
 		if absf((key.x + 0.5) * TORSO_CELL - pocket.x) < 0.04 and absf((key.y + 0.5) * TORSO_CELL - pocket.y) < 0.04:
 			fronts.append(grid[key])
 	fronts.sort()
-	pocket.z = (fronts[fronts.size() / 2] if not fronts.is_empty() else 0.14) + 0.01
+	# A little into the measured surface: clothing and the shoulder give under a shouldered stock.
+	pocket.z = (fronts[fronts.size() / 2] if not fronts.is_empty() else 0.14) - POCKET_SINK
+	# ...and never further out than a hand's breadth in front of the shoulder joint (thick
+	# jackets would otherwise hold the rifle out at arm's length).
+	pocket.z = minf(pocket.z, arm.z + POCKET_MAX_AHEAD)
 	var res := {"grid": grid, "pocket": pocket}
 	_torso_cache[p_skin] = res
 	return res
@@ -1339,6 +1455,8 @@ func clip_push(gun_s: Transform3D) -> Vector3:
 		var f := _torso_front(l.x, l.y)
 		if f > -INF:
 			pen = maxf(pen, f + CLIP_MARGIN - l.z)
+	# Shouldered, a bulky jacket may swallow the butt a little rather than hold the rifle out.
+	pen = minf(pen, lerpf(0.12, 0.04, _aim))
 	return _chest_frame.basis.z * pen * w
 
 
@@ -1357,6 +1475,11 @@ static func _flipx(v: Vector3) -> Vector3:
 
 ## Global finger direction of hand 0 = right, 1 = left. On the left shoulder the roles swap
 ## (the left hand takes the pistol grip) and the directions are mirrored.
+## 0 = low ready / sprint carry, 1 = shouldered (read by RaiderIK).
+func aim_weight() -> float:
+	return _aim
+
+
 func hand_dir(i: int) -> Vector3:
 	var local: Vector3
 	if i == 0:

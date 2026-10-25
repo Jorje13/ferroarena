@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dwnlr0eo4d3t7"
-path="res://.godot/imported/longshot_texture_0_metallic_roughness.png-55640753defabe09ecee990e944e5b41.ctex"
+path.s3tc="res://.godot/imported/longshot_texture_0_metallic_roughness.png-55640753defabe09ecee990e944e5b41.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "8f82e5f2bb734f603d74b3a0974f8195"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/weapons/longshot_texture_0_metallic_roughness.png"
-dest_files=["res://.godot/imported/longshot_texture_0_metallic_roughness.png-55640753defabe09ecee990e944e5b41.ctex"]
+dest_files=["res://.godot/imported/longshot_texture_0_metallic_roughness.png-55640753defabe09ecee990e944e5b41.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +40,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
-detect_3d/compress_to=1
+process/size_limit=2048
+detect_3d/compress_to=0

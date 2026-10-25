@@ -17,6 +17,8 @@ func _bone(n: String) -> int:
 	return _b[n]
 
 
+## Shoulder (clavicle) swing forward while holding the rifle (rad, about the vertical).
+const CLAVICLE_FWD := 0.32
 var _reach := Vector3.ZERO
 var _push := Vector3.ZERO
 var _slide := 0.0
@@ -108,6 +110,12 @@ func _modify() -> void:
 	var ln := rig.lean - Vector2(0, rig.kick_lean)
 	if ln.length_squared() > 0.00001:
 		_rotate_global(sk, _bone("spine_01"), Basis(Vector3(0, 0, 1), ln.x) * Basis(Vector3.RIGHT, ln.y))
+	# Holding the rifle up, both shoulders come forward a little (as a real shooter's do), so
+	# the arms reach the grips with the elbows bent instead of locked straight.
+	var pro := CLAVICLE_FWD * rig.arm_w * (0.6 + 0.4 * rig.aim_weight())
+	if pro > 0.001:
+		_rotate_global(sk, _bone("clavicle_r"), Basis(Vector3.UP, pro))
+		_rotate_global(sk, _bone("clavicle_l"), Basis(Vector3.UP, -pro))
 	# Backpack: follows the chest position but only part of its rotation, so it
 	# rides the back instead of flapping with every jog/sprint keyframe.
 	var sp := sk.get_bone_global_pose(_bone("spine_03"))
@@ -131,14 +139,19 @@ func _modify() -> void:
 		print("[CLIP] skin %d slide %.2f pocket %s reach %s push %s butt %s" % [rig.skin, _slide, str(rig._torso.pocket), str(_reach.snapped(Vector3.ONE * 0.01)), str(push.snapped(Vector3.ONE * 0.01)),
 			str((rig._chest_frame.affine_inverse() * (gun_s * Vector3(0, rig._butt_y, rig._stock_back))).snapped(Vector3.ONE * 0.01))])
 	rig.gun.global_transform = sk.global_transform * gun_s
+	# Level of detail (CharacterRig.detail): far / off-screen raiders skip the fingers, and
+	# the arms too when both; the rifle itself is always placed (the muzzle drives the FX).
+	if rig.detail <= 0:
+		return
 	# 4. Arm IK onto the grips.
 	var tr: Vector3 = inv * rig.hand_target(0)
 	var tl: Vector3 = inv * rig.hand_target(1)
 	var fwd: Vector3 = (gun_s.basis * Vector3.FORWARD).normalized()
 	_arm(sk, "r", tr, Vector3(-0.6, -0.5, -0.3).lerp(Vector3(-0.22, -0.8, -0.3), rig.shoulder_k), (inv.basis * rig.hand_dir(0)).normalized(), -1.0, 0.0)
 	_arm(sk, "l", tl, Vector3(0.22, -0.8, -0.3).lerp(Vector3(0.6, -0.5, -0.3), rig.shoulder_k), (inv.basis * rig.hand_dir(1)).normalized(), -1.0, 0.0)
-	_grip(sk, "r", inv * rig.grip_wrap(0), rig.arm_w)
-	_grip(sk, "l", inv * rig.grip_wrap(1), rig.arm_w)
+	if rig.detail >= 2:
+		_grip(sk, "r", inv * rig.grip_wrap(0), rig.arm_w)
+		_grip(sk, "l", inv * rig.grip_wrap(1), rig.arm_w)
 	# 5. Vault: hands planted flat on the obstacle's top (right hand = first point).
 	if rig.vault_w > 0.01 and rig.vault_hand_pos.size() == 2:
 		var vf: Vector3 = (inv.basis * rig.vault_dir).normalized()

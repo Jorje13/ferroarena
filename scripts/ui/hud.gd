@@ -321,7 +321,13 @@ func _on_wave_changed() -> void:
 	_last_wave_phase = mo.phase
 	match mo.phase:
 		MonsterManager.Phase.WAVE:
-			_show_announce("VAGUE %d" % mo.wave, "%d ennemis" % mo.total, 3.0)
+			var from := ""
+			var v := viewed()
+			if v and mo.wave_origin != Vector3.INF:
+				var to := mo.wave_origin - v.global_position
+				var b := fposmod(rad_to_deg(atan2(to.x, -to.z)), 360.0)
+				from = " · ils arrivent du %s (%d m)" % [["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"][int(roundf(b / 45.0)) % 8], int(Vector2(to.x, to.z).length())]
+			_show_announce("VAGUE %d" % mo.wave, "%d ennemis%s" % [mo.total, from], 4.0)
 			_close_shop()
 		MonsterManager.Phase.BREAK:
 			if mo.wave > 0:
@@ -484,7 +490,8 @@ func _low_health_feedback(v: Player, delta: float) -> void:
 		var env := map.environment_node.environment
 		if _base_saturation < 0.0:
 			_base_saturation = env.adjustment_saturation
-		env.adjustment_saturation = _base_saturation * _sat
+		# Night washes the colours out too (zombie survival).
+		env.adjustment_saturation = _base_saturation * _sat * (1.0 - 0.3 * map.night)
 	_heart_t -= delta
 	if beat > 0.0 and _heart_t <= 0.0:
 		_heart_t = beat
@@ -1416,6 +1423,15 @@ class Compass extends Control:
 				var x := cx + rel / SPAN * cx
 				var c: Color = UIStyle.DANGER if p.downed else Game.team_color(p.team)
 				draw_colored_polygon(PackedVector2Array([Vector2(x - 5, 34), Vector2(x + 5, 34), Vector2(x, 41)]), c)
+		# Zombie survival: where the current wave pours out from (red, pulsing).
+		var mo: MonsterManager = hud.arena.monsters
+		if v and mo and mo.phase == MonsterManager.Phase.WAVE and mo.wave_origin != Vector3.INF:
+			var to3 := mo.wave_origin - v.global_position
+			var rel3 := wrapf(fposmod(rad_to_deg(atan2(to3.x, -to3.z)), 360.0) - bearing, -180.0, 180.0)
+			var x3 := cx + clampf(rel3, -SPAN, SPAN) / SPAN * cx
+			var pulse := 0.65 + 0.35 * sin(Time.get_ticks_msec() * 0.008)
+			draw_colored_polygon(PackedVector2Array([Vector2(x3 - 8, 31), Vector2(x3 + 8, 31), Vector2(x3, 45)]), Color(1.0, 0.15, 0.08, pulse))
+			draw_string(font, Vector2(x3 - 30, 60), "%d m" % int(Vector2(to3.x, to3.z).length()), HORIZONTAL_ALIGNMENT_CENTER, 60, 12, Color(1.0, 0.35, 0.25, 0.9))
 		# Active supply crates within 60 m
 		if v and v.is_inside_tree():
 			for ch in hud.arena.chests:

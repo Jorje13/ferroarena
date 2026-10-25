@@ -1,0 +1,4 @@
+Sons de zombies (CC0, OpenGameArt) :
+- zombies.zip « Zombies Sound Pack » (Summoning Wars) -> groan_*, snarl_*
+- « Zombie / Skeleton / Monster Voice Effects » -> attack_*, death_*
+- « Zombie moans » par darsycho -> moan_*

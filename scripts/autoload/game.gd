@@ -7,7 +7,7 @@ signal all_peers_ready
 
 const DEFAULT_PORT := 7777
 ## Bump when the network protocol / gameplay changes: mismatched builds are refused.
-const GAME_VERSION := "0.26.0"
+const GAME_VERSION := "0.27.0"
 const MAX_CLIENTS := 19
 ## Biggest team (format 10v10).
 const MAX_TEAM := 10
@@ -118,6 +118,31 @@ func prof_add(key: String, t0_usec: int) -> void:
 	prof[key] = int(prof.get(key, 0)) + Time.get_ticks_usec() - t0_usec
 
 
+## --log_load: pipeline compilations so far (by when they happened) and video memory.
+func log_pipelines() -> void:
+	if not debug.has("log_load"):
+		return
+	var r := RenderingServer
+	print("[PIPE] canvas %d  mesh %d  surface %d  draw %d  specialization %d   vram %d Mo  textures %d Mo" % [
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_PIPELINE_COMPILATIONS_CANVAS),
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_PIPELINE_COMPILATIONS_MESH),
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_PIPELINE_COMPILATIONS_SURFACE),
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_PIPELINE_COMPILATIONS_DRAW),
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_PIPELINE_COMPILATIONS_SPECIALIZATION),
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) / 1048576,
+		r.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) / 1048576])
+
+
+var _mark_ms := 0
+## --log_load: loading milestones (ms since launch, and since the previous milestone).
+func mark(label: String) -> void:
+	if not debug.has("log_load"):
+		return
+	var now := Time.get_ticks_msec()
+	print("[LOAD] %6d ms  (+%5d)  %s" % [now, now - _mark_ms, label])
+	_mark_ms = now
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_inputs()
@@ -133,12 +158,24 @@ func _ready() -> void:
 	# Debug: --run_tool=res://tools/x.gd runs a measuring Node script with the autoloads loaded.
 	if debug.has("run_tool"):
 		get_tree().root.add_child.call_deferred((load(str(debug.run_tool)) as GDScript).new())
-	elif debug.has("autosolo"):
-		_start_debug_solo.call_deferred()
+
+
+## Resources loaded by the launch screen (scenes/boot.tscn), held for the whole session.
+var preloaded: Array = []
+
+
+## Debug launches that skip the menu (--autosolo / --host / --join), started by the launch screen.
+func has_boot_target() -> bool:
+	return debug.has("autosolo") or debug.has("host") or debug.has("join")
+
+
+func after_boot() -> void:
+	if debug.has("autosolo"):
+		_start_debug_solo()
 	elif debug.has("host"):
-		_start_debug_host.call_deferred()
+		_start_debug_host()
 	elif debug.has("join"):
-		join_game.call_deferred(str(debug.join))
+		join_game(str(debug.join))
 
 
 # ---------------------------------------------------------------- inputs

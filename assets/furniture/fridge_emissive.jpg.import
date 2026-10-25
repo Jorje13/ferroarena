@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dpk1isyrb3u7m"
-path="res://.godot/imported/fridge_emissive.jpg-02bae98675f2e2ba06346b9d036df80a.ctex"
+path.s3tc="res://.godot/imported/fridge_emissive.jpg-02bae98675f2e2ba06346b9d036df80a.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "97d3f772e76cd0f52003db3e7c21a47a"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/furniture/fridge_emissive.jpg"
-dest_files=["res://.godot/imported/fridge_emissive.jpg-02bae98675f2e2ba06346b9d036df80a.ctex"]
+dest_files=["res://.godot/imported/fridge_emissive.jpg-02bae98675f2e2ba06346b9d036df80a.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +40,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
-detect_3d/compress_to=1
+process/size_limit=2048
+detect_3d/compress_to=0

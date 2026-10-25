@@ -279,6 +279,8 @@ var _revive_req := 0.0
 
 
 func _ready() -> void:
+	Game.mark("joueur %s : début" % name)
+	ready.connect(func(): Game.mark("joueur %s : prêt (peau %d)" % [name, int(ArmorKit.sanitize(loadout).skin)]), CONNECT_ONE_SHOT)
 	arena = get_tree().current_scene as Arena
 	_shape = CapsuleShape3D.new()
 	_shape.radius = 0.36
@@ -319,6 +321,7 @@ func is_local_human() -> bool:
 # ---------------------------------------------------------------- frame loop
 
 func _physics_process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
 	if is_multiplayer_authority():
 		if is_bot:
 			if brain:
@@ -326,7 +329,11 @@ func _physics_process(delta: float) -> void:
 		else:
 			_gather_human_input()
 			_debug_auto_throw()
+		Game.prof_add("phys_think", t0)
+		t0 = Time.get_ticks_usec()
 		_authority_step(delta)
+		Game.prof_add("phys_move", t0)
+		t0 = Time.get_ticks_usec()
 		input.clear_triggers()
 		flags = _pack_flags()
 		searching = interact_progress > 0.0
@@ -345,6 +352,7 @@ func _physics_process(delta: float) -> void:
 		shield_t += delta
 	if multiplayer.is_server():
 		_server_step(delta)
+	Game.prof_add("phys_rest", t0)
 	_prev_pos = _curr_pos
 	_curr_pos = global_position
 	_prev_yaw = _curr_yaw
@@ -374,6 +382,7 @@ func _process(delta: float) -> void:
 	if is_local_human():
 		_update_previews()
 		_update_fire_blocked(delta)
+	Game.prof_add("player_misc", t0)
 
 
 ## 0..1 (smoothed): the slug would hit geometry right in front of the muzzle instead

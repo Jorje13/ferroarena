@@ -3,19 +3,20 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b3eppg0p88w2m"
-path="res://.godot/imported/old_tyre_arm_2k.jpg-e01596c2c44c5acfb0474d75c633a526.ctex"
+path.s3tc="res://.godot/imported/old_tyre_arm_2k.jpg-e01596c2c44c5acfb0474d75c633a526.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/polyhaven/models/old_tyre/textures/old_tyre_arm_2k.jpg"
-dest_files=["res://.godot/imported/old_tyre_arm_2k.jpg-e01596c2c44c5acfb0474d75c633a526.ctex"]
+dest_files=["res://.godot/imported/old_tyre_arm_2k.jpg-e01596c2c44c5acfb0474d75c633a526.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -23,7 +24,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
@@ -36,5 +37,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
-detect_3d/compress_to=1
+process/size_limit=2048
+detect_3d/compress_to=0

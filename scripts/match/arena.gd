@@ -19,6 +19,7 @@ var _barricade_seq := 0
 var _loot_rng := RandomNumberGenerator.new()
 
 var _nav_region: NavigationRegion3D
+var _load_t0 := 0
 ## Mode helpers (null outside their mode): prop hunt rules, battle royale zone.
 var prop_hunt: PropHunt
 var zone: BattleZone
@@ -32,6 +33,7 @@ var post_mat: ShaderMaterial
 
 
 func _ready() -> void:
+	Game.mark("arène: début")
 	spawner.spawn_function = _spawn_player
 	var me: Dictionary = Game.lobby.get(multiplayer.get_unique_id(), {})
 	local_team = 0 if Game.is_zombie() else int(me.get("team", 0))
@@ -42,6 +44,7 @@ func _ready() -> void:
 	add_child(map)
 	map.zombie = Game.is_zombie()
 	map.build(Game.quality)
+	Game.mark("arène: carte construite")
 	Audio.start_ambience(map.biome)
 
 	camera_rig = CameraRig.new()
@@ -82,14 +85,17 @@ func _ready() -> void:
 		post.add_child(rect)
 		add_child(post)
 
+	Game.mark("arène: caisses / mode / météo")
 	hud = Hud.new()
 	hud.name = "Hud"
 	add_child(hud)
 	hud.setup(self)
+	Game.mark("arène: HUD")
 
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if multiplayer.is_server():
 		_bake_navigation()
+		Game.mark("arène: navmesh lancé")
 		Game.all_peers_ready.connect(_on_all_ready, CONNECT_ONE_SHOT)
 	Game.notify_arena_ready()
 	if Game.debug.has("screenshot"):
@@ -467,6 +473,14 @@ var _perf_t := 0.0
 
 func _process(delta: float) -> void:
 	_debug_tick(delta)
+	# --log_load: frames longer than 40 ms during the first 30 s (shader compiles, lazy loads).
+	if Game.debug.has("log_load") and Time.get_ticks_msec() - _load_t0 < 30000:
+		if _load_t0 == 0:
+			_load_t0 = Time.get_ticks_msec()
+			Game.mark("arène: première image")
+			Game.log_pipelines()
+		elif delta > 0.04:
+			print("[HITCH] %5d ms après la 1re image : image de %d ms (état %d)" % [Time.get_ticks_msec() - _load_t0, int(delta * 1000.0), match_mgr.state])
 	# --perf_log: every 5 s, frame cost + bot AI cost + live smoke trails.
 	# --perf_off=anim,players,mm,props,hud,particles,env: switch blocks off (perf bisection).
 	if Game.debug.has("perf_off") and _perf_t > 3.0 and not has_meta("perf_off_done"):

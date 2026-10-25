@@ -43,6 +43,14 @@ var _retarget := 0.0
 var _strafe := 1.0
 var _growl := randf_range(2.0, 6.0)
 var _stuck_t := 0.0
+var _stuck_from := Vector3.ZERO
+var _watch_t := 0.0
+var _watch_best := INF
+var _no_progress := 0
+var _far_t := 0.0
+const WATCH_TIME := 4.0
+const FAR_DIST := 75.0
+const FAR_TIME := 8.0
 var _los := false
 var _los_t := 0.0
 var _hit_bodies: Array = []
@@ -154,7 +162,7 @@ func _on_state(s: String, _prev: String) -> void:
 	var pos := global_position + Vector3(0, 1.2, 0)
 	match s:
 		"windup":
-			Audio.play_3d("mon_growl", pos, 3.0, 60.0, 0.08, [0.85, 1.3, 0.7][kind])
+			Audio.play_3d("zmb_attack", pos, 4.0, 60.0, 0.08, [0.75, 1.15, 0.9][kind])
 		"strike":
 			Audio.play_3d("mon_swipe", pos, 2.0, 40.0, 0.1, [0.8, 1.1, 0.9][kind])
 		"crouch":
@@ -165,9 +173,9 @@ func _on_state(s: String, _prev: String) -> void:
 			Audio.play_3d("mon_slam", global_position, 2.0, 55.0, 0.08)
 		"dead":
 			collision_layer = 0
-			Audio.play_3d("mon_death", pos, 4.0, 65.0, 0.06, [0.8, 1.1, 0.7][kind])
+			Audio.play_3d("zmb_death", pos, 5.0, 65.0, 0.06, [0.75, 1.15, 0.9][kind])
 		"spawn":
-			Audio.play_3d("mon_growl", pos, 1.0, 55.0, 0.05, 0.7)
+			Audio.play_3d("zmb_moan", pos, 2.0, 55.0, 0.08, 0.9)
 
 
 func _process(delta: float) -> void:
@@ -208,7 +216,7 @@ func _ai(delta: float) -> void:
 		_retarget = 0.4
 		_pick_target()
 	if _growl <= 0.0 and state in ["walk", "run", "idle"]:
-		_growl = randf_range(4.0, 9.0)
+		_growl = randf_range(3.0, 7.0)
 		manager.server_sound(id, "mon_growl")
 	match state:
 		"spawn":
@@ -357,13 +365,45 @@ func _hunt(delta: float) -> void:
 		_face_target(delta, 12.0)
 	_gravity(delta)
 	move_and_slide()
-	# Stuck on geometry: jink sideways, re-plan.
+	# Stuck on geometry: jink sideways, re-plan (judged on real displacement: sliding against a
+	# wall keeps the velocity up).
 	_stuck_t += delta
 	if _stuck_t >= 1.0:
 		_stuck_t = 0.0
-		if Vector2(velocity.x, velocity.z).length() < 0.6 and dist > stop_at + 0.5:
+		if global_position.distance_to(_stuck_from) < 0.6 and dist > stop_at + 0.5:
 			_strafe = -_strafe
 			_repath = 0.0
+		_stuck_from = global_position
+	_watchdog(delta, dist, stop_at)
+
+
+## No headway on the prey for a while (wedged, path ending short of a raised floor, wandered
+## off), far off for too long, or fallen out of the world: the manager puts it back on the hunt
+## somewhere closer, out of the survivors' sight.
+func _watchdog(delta: float, dist: float, stop_at: float) -> void:
+	_watch_t += delta
+	if global_position.y < -30.0:
+		manager.server_relocate(self, target)
+		return
+	_far_t = _far_t + delta if dist > FAR_DIST and not _los else 0.0
+	if _far_t > FAR_TIME:
+		_far_t = 0.0
+		manager.server_relocate(self, target)
+		return
+	if _watch_t < WATCH_TIME:
+		return
+	_watch_t = 0.0
+	var gained := _watch_best - dist
+	_watch_best = dist
+	if dist > stop_at + 1.5 and gained < 1.0:
+		_no_progress += 1
+		_repath = 0.0
+		_strafe = -_strafe
+		if _no_progress >= 2:
+			_no_progress = 0
+			manager.server_relocate(self, target)
+	else:
+		_no_progress = 0
 
 
 func _steer(dest: Vector3, speed: float, delta: float) -> void:

@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://baitc80x2rc7f"
-path="res://.godot/imported/fridge_metallic_roughness.jpg-31f0c3896e94e25d7899df93187b4d0d.ctex"
+path.s3tc="res://.godot/imported/fridge_metallic_roughness.jpg-31f0c3896e94e25d7899df93187b4d0d.s3tc.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "e5a3f22b6070310f1d9699e67e798614"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/furniture/fridge_metallic_roughness.jpg"
-dest_files=["res://.godot/imported/fridge_metallic_roughness.jpg-31f0c3896e94e25d7899df93187b4d0d.ctex"]
+dest_files=["res://.godot/imported/fridge_metallic_roughness.jpg-31f0c3896e94e25d7899df93187b4d0d.s3tc.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +40,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
-detect_3d/compress_to=1
+process/size_limit=2048
+detect_3d/compress_to=0

@@ -28,6 +28,10 @@ var rng := RandomNumberGenerator.new()
 ## Zombie survival (set before build): the building nearest the centre becomes the survivors'
 ## base, with the workbench ({pos, facing}) and everyone's start points inside.
 var zombie := false
+## Points of interest planned by plan_layout (Poi.plan), built after the buildings.
+var pois: Array = []
+## Set while a point of interest builds itself inside its own pad.
+var _ignore_pads := false
 var zombie_bench := {}
 var zombie_spawns: Array[Vector3] = []
 
@@ -55,6 +59,8 @@ func build(q: int) -> void:
 		_pick_zombie_base()
 	_build_terrain()
 	build_planned_buildings()
+	for poi in pois:
+		Poi.build(self, poi)
 	build_layout()
 	_flush_batches()
 	_build_bounds()
@@ -383,6 +389,41 @@ func _build_environment() -> void:
 	sun.directional_shadow_max_distance = [60.0, 100.0, 140.0, 200.0][clampi(quality, 0, 3)]
 	sun.light_volumetric_fog_energy = 1.2
 	add_child(sun)
+	_day = {"sun_color": sun.light_color, "sun_energy": sun.light_energy, "sun_basis": sun.basis,
+		"ambient": env.ambient_light_energy, "fog_color": env.fog_light_color, "fog_density": env.fog_density,
+		"vol_albedo": env.volumetric_fog_albedo, "exposure": env.tonemap_exposure, "saturation": env.adjustment_saturation,
+		"sky": (sky.sky_material as PanoramaSkyMaterial).energy_multiplier if sky.sky_material is PanoramaSkyMaterial else float(p.sky_energy)}
+
+
+## Day values captured at build time, for set_night.
+var _day := {}
+## 0 = day, 1 = night (zombie survival: dark during the waves, day between them).
+var night := 0.0
+## Moonlight: cold, dim, from high on the other side of the sky.
+const MOON_COLOR := Color(0.55, 0.65, 0.95)
+const NIGHT_FOG := Color(0.05, 0.065, 0.1)
+
+
+func set_night(k: float) -> void:
+	k = clampf(k, 0.0, 1.0)
+	if is_equal_approx(k, night) or _day.is_empty():
+		return
+	night = k
+	var env := environment_node.environment
+	var e := smoothstep(0.0, 1.0, k)
+	sun.light_color = (_day.sun_color as Color).lerp(MOON_COLOR, e)
+	sun.light_energy = lerpf(_day.sun_energy, 0.16, e)
+	sun.basis = (_day.sun_basis as Basis).slerp(Basis.from_euler(Vector3(deg_to_rad(-55.0), deg_to_rad(120.0), 0.0)), e)
+	env.ambient_light_energy = lerpf(_day.ambient, 0.1, e)
+	env.fog_light_color = (_day.fog_color as Color).lerp(NIGHT_FOG, e)
+	env.fog_density = lerpf(_day.fog_density, _day.fog_density * 2.2, e)
+	env.volumetric_fog_albedo = (_day.vol_albedo as Color).lerp(NIGHT_FOG, e)
+	env.tonemap_exposure = lerpf(_day.exposure, _day.exposure * 1.35, e)
+	var sm := env.sky.sky_material
+	if sm is PanoramaSkyMaterial:
+		(sm as PanoramaSkyMaterial).energy_multiplier = lerpf(_day.sky, _day.sky * 0.04, e)
+	elif sm is ShaderMaterial:
+		(sm as ShaderMaterial).set_shader_parameter("energy", lerpf(_day.sky, _day.sky * 0.04, e))
 
 
 # ---------------------------------------------------------------- terrain
@@ -707,7 +748,7 @@ func _props_free(p: Vector2, r: float) -> bool:
 ## Fills the empty ground with extra cover and loot: `count` random spots in
 ## the first half (each placed twice, point-symmetric). Keeps the spawn lines
 ## and the centre clear. `kinds` weights: ruin, container, car, crates, barrier, rock, clutter.
-func fill_cover(count: int, weights := [0, 2, 3, 5, 4, 3, 3]) -> void:
+func fill_cover(count: int, weights := [0, 2, 3, 5, 4, 3, 3, 3, 2]) -> void:
 	var total := 0
 	for w in weights:
 		total += w
@@ -725,7 +766,7 @@ func fill_cover(count: int, weights := [0, 2, 3, 5, 4, 3, 3]) -> void:
 			if r <= 0.0:
 				kind = i
 				break
-		var clearance: float = [9.0, 6.5, 5.0, 3.0, 4.0, 3.5, 4.5][kind]
+		var clearance: float = [9.0, 6.5, 5.0, 3.0, 4.0, 3.5, 4.5, 3.5, 4.5][kind]
 		if not is_free(p, clearance) or not is_free(-p, clearance):
 			continue
 		var yaw := rng.randf() * TAU
@@ -751,6 +792,14 @@ func fill_cover(count: int, weights := [0, 2, 3, 5, 4, 3, 3]) -> void:
 					add_rock(q, rng.randf_range(1.8, 3.2), y)
 				6:
 					scatter_clutter(q, 3.5, 3)
+				7:
+					# Rubble heap (low cover you can see over when standing).
+					Scan.place(make_root(q, y, 0.1), Poi.RUBBLE, Transform3D(Basis().scaled(Vector3.ONE * 1.8), Vector3.ZERO), "", "convex")
+					no_grass.append(Rect2(q - Vector2(2, 2), Vector2(4, 4)))
+				8:
+					# Stack of wrecks (full cover).
+					Scan.place(make_root(q, y, 0.05), Poi.CAR_STACK, Transform3D(Basis().scaled(Vector3.ONE * 2.4), Vector3.ZERO), "", "box")
+					no_grass.append(Rect2(q - Vector2(3, 3), Vector2(6, 6)))
 		# A crate beside ruins and some stacks (point-symmetric pair, kept in order).
 		if loot:
 			var off := Vector2(rng.randf_range(-1.2, 1.2), rng.randf_range(-1.2, 1.2))
@@ -794,7 +843,9 @@ func _ground_avg(c: Vector2, h: Vector2) -> float:
 ## Registers a building to build later and flattens the ground under it.
 ## `size` is rounded to whole modules, `yaw` to a quarter turn. Layouts are authored small:
 ## every building gets one extra module each way (room for the furniture) unless `exact`.
-func plan_building(center: Vector2, size: Vector2, floors: int, yaw: float, seed: int, mat: Material = null, exact := false) -> void:
+## `extra` (points of interest): "furniture" = ids placed first, "cctv" = cameras over the doors,
+## "y" = floor level shared with the surrounding pad, "random_furniture" = false for none else.
+func plan_building(center: Vector2, size: Vector2, floors: int, yaw: float, seed: int, mat: Material = null, exact := false, extra := {}) -> void:
 	var quarter := roundi(yaw / (PI * 0.5))
 	var grow := 0 if exact else 1
 	var nx := maxi(2, roundi(size.x / MODULE_W) + grow)
@@ -804,13 +855,17 @@ func plan_building(center: Vector2, size: Vector2, floors: int, yaw: float, seed
 		nx = maxi(nx, 3) # the staircase needs 8 m of wall
 	var half := Vector2(nx, nz) * MODULE_W * 0.5
 	var world_half := half if posmod(quarter, 2) == 0 else Vector2(half.y, half.x)
-	var level := _ground_avg(center, world_half)
+	var level: float = extra.get("y", _ground_avg(center, world_half))
 	_pads.append({"c": center, "h": world_half + Vector2(1.0, 1.0), "y": level})
-	_planned.append({"c": center, "nx": nx, "nz": nz, "floors": floors, "quarter": quarter, "seed": seed, "mat": mat, "y": level})
+	var b := {"c": center, "nx": nx, "nz": nz, "floors": floors, "quarter": quarter, "seed": seed, "mat": mat, "y": level}
+	b.merge(extra)
+	_planned.append(b)
 
 
 ## True if no planned pad lies within `r` of `p`.
 func _pad_free(p: Vector2, r: float) -> bool:
+	if _ignore_pads:
+		return true
 	for pad in _pads:
 		if absf(p.x - pad.c.x) < pad.h.x + r and absf(p.y - pad.c.y) < pad.h.y + r:
 			return false
@@ -962,7 +1017,14 @@ func _build_building(b: Dictionary) -> void:
 		keep.append(stack_at)
 	if b.get("base", false):
 		_fit_out_base(root, w, d, floors, keep)
-	_furnish(root, w, d, floors, r, keep)
+	_furnish(root, w, d, floors, r, keep, b.get("furniture", []), b.get("random_furniture", true))
+	# Surveillance cameras over doorways: always on points of interest, now and then elsewhere.
+	if b.get("cctv", false) or r.randf() < 0.25:
+		var n := 0
+		for s in _wall_slots:
+			if s.kind == "door" and n < (2 if b.get("cctv", false) else 1):
+				add_cctv(root, s.pos, s.out, 1.0 if n % 2 == 0 else -1.0)
+				n += 1
 
 
 # ---------------------------------------------------------------- furniture
@@ -978,12 +1040,23 @@ const FURNITURE := {
 	"lockers": ["res://assets/furniture/lockers.glb", 1.0, true],
 	"bed": ["res://assets/furniture/bed.glb", 1.05, false],
 	"couch": ["res://assets/furniture/couch.glb", 1.05, false],
+	"toilet": ["res://assets/props/toilet.glb", 0.4, false],
+	# Shop counter with tobacco rack (gas station), only where asked for.
+	"counter": ["res://assets/props/gas_pump.glb", 1.15, false],
+	"garage_shelf": ["res://assets/props/garage_shelf.glb", 1.0, true],
+	"tool_cabinet": ["res://assets/props/tool_cabinet.glb", 0.62, false],
+	"tool_bench": ["res://assets/props/maintenance.glb", 0.95, true],
+	"electric_panel": ["res://assets/props/electric_panel.glb", 0.55, false],
 }
+## Drawn by the random fill (the others only when a building asks for them).
+const FURNITURE_RANDOM := ["fridge", "cabinet", "lockers", "bed", "couch", "toilet", "tool_cabinet", "electric_panel"]
+const CCTV_SCENE := "res://assets/props/cctv.glb"
+const CCTV_SCALE := 0.25
 const WORKBENCH_SCENE := "res://assets/furniture/workbench.glb"
 var _wall_slots: Array = []
 
 
-func _furnish(root: Node3D, w: float, d: float, floors: int, r: RandomNumberGenerator, keep: Array[Vector3]) -> void:
+func _furnish(root: Node3D, w: float, d: float, floors: int, r: RandomNumberGenerator, keep: Array[Vector3], wanted: Array = [], random_fill := true) -> void:
 	var doors: Array[Vector3] = []
 	for s in _wall_slots:
 		if s.kind == "door":
@@ -1004,17 +1077,18 @@ func _furnish(root: Node3D, w: float, d: float, floors: int, r: RandomNumberGene
 				ok = false
 		if ok:
 			free.append(s)
-	var ids := FURNITURE.keys()
-	var goal := clampi(free.size() / 2, 2, 5)
+	var ids := FURNITURE_RANDOM
+	var goal := clampi(free.size() / 2, 2, 5) if random_fill else 0
+	goal = maxi(goal, wanted.size())
 	var placed := 0
 	var tries := 0
-	while placed < goal and not free.is_empty() and tries < 30:
+	while placed < goal and not free.is_empty() and tries < 40:
 		tries += 1
 		var si := r.randi_range(0, free.size() - 1)
 		var s: Dictionary = free[si]
-		var id: String = ids[r.randi_range(0, ids.size() - 1)]
+		var id: String = wanted[placed] if placed < wanted.size() else ids[r.randi_range(0, ids.size() - 1)]
 		var def: Array = FURNITURE[id]
-		if bool(def[2]) and s.kind != "solid":
+		if bool(def[2]) and s.kind != "solid" and tries < 30:
 			continue
 		free.remove_at(si)
 		# Neighbouring slots on the same wall stay empty (a bed or a couch is wider than half a module).
@@ -1079,6 +1153,22 @@ func _fit_out_base(root: Node3D, w: float, d: float, floors: int, keep: Array[Ve
 	# Centre first, so a small squad stands together.
 	var c := root.position
 	zombie_spawns.sort_custom(func(a, b): return Vector2(a.x - c.x, a.z - c.z).length() < Vector2(b.x - c.x, b.z - c.z).length())
+
+
+## Surveillance camera high on a wall, beside a doorway (`side` = which side): `wall_pos` on the
+## wall's centre line, `outward` its outer normal (local to `root`). The model's wall plate is
+## at its -Z end, the lens looks along +Z.
+func add_cctv(root: Node3D, wall_pos: Vector3, outward: Vector3, side := 1.0, height := 3.0) -> void:
+	if not Scan.exists(CCTV_SCENE):
+		return
+	var size: Vector3 = Scan.size_of(CCTV_SCENE) * CCTV_SCALE
+	var along := Vector3.UP.cross(outward).normalized()
+	# Plate out past the brick facade modules, which stand proud of the concrete core.
+	var plate := wall_pos + outward * (WALL_T * 0.5 + 0.2) + along * side * 1.4
+	plate.y = wall_pos.y + height
+	# Turned a little towards the doorway it watches (about the plate).
+	var basis := Basis(Vector3.UP, atan2(outward.x, outward.z) - side * 0.35)
+	Scan.place(root, CCTV_SCENE, Transform3D(basis.scaled(Vector3.ONE * CCTV_SCALE), plate + basis * Vector3(0, 0, size.z * 0.5)), "", "none")
 
 
 ## One piece of furniture with its back to a wall: `wall_pos` on the wall's centre line and
@@ -1577,6 +1667,8 @@ func add_lamp(p: Vector2, yaw: float) -> void:
 
 ## Chain-link fence from a to b. Blocks players (layer 3) but not bullets or sight.
 func add_fence(a: Vector2, b: Vector2) -> void:
+	if not _pad_free((a + b) * 0.5, 0.5):
+		return
 	var dir := b - a
 	var length := dir.length()
 	var seg := Scan.size_of("modular_chainlink_fence", "modular_chainlink_fence_double$").x

@@ -343,6 +343,12 @@ func _apply_kill_cam(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_process_cam(delta)
+	Game.prof_add("camera", t0)
+
+
+func _process_cam(delta: float) -> void:
 	# Debug free camera for map screenshots: --cam_at=x,y,z --cam_look=x,y,z
 	if Game.debug.has("cam_at"):
 		var at := str(Game.debug.cam_at).split_floats(",")

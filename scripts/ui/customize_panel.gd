@@ -7,7 +7,7 @@ signal changed(loadout: Dictionary)
 signal closed
 
 ## The realistic trooper is a single sculpted model: no swappable pieces.
-const PIECES := [["skin", "Personnage"], ["weapon", "Fusil"]]
+const PIECES := [["skin", "Personnage"], ["weapon", "Arme"]]
 const COLORS := [["suit", "Combinaison", ArmorKit.SUIT_COLORS], ["armor", "Casque & plastron", ArmorKit.ARMOR_COLORS], ["fabric", "Équipement", ArmorKit.FABRIC_COLORS]]
 
 var loadout := {}

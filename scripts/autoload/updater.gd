@@ -11,10 +11,23 @@ extends Node
 ##
 ## Publishing: create a GitHub release tagged "v<GAME_VERSION>" (e.g. v0.14.1)
 ## with the zip of the exported build attached (tools/release.ps1).
+##
+## Downloads come from the "bin" subfolder of the public Google Drive folder (ferroarena.jrjx.me
+## redirects to it) when it holds this version's files, named "FerroArena-<version>.zip" and
+## "FerroArena-patch-<installed>-to-<version>.fdl" (tools/release.ps1 prepares them in
+## build/drive); GitHub only says which version is the latest. A file missing from the Drive, or
+## a Drive download that fails (quota, warning page...), falls back to the GitHub asset.
 
 const REPO := "Jorje13/ferroarena"
 const API_URL := "https://api.github.com/repos/%s/releases/latest" % REPO
 const DOWNLOAD_PREFIX := "https://github.com/" + REPO + "/"
+const DRIVE_FOLDER := "1aaKtSDXoBh6joYYXSfmRHfP_pgy1-QNa"
+## Public folder listing (no API key): one "entry-<file id>" block per file / subfolder, with its title.
+const DRIVE_LIST := "https://drive.google.com/embeddedfolderview?id=%s"
+## Subfolder (looked up by name) that holds the builds.
+const DRIVE_BIN := "bin"
+## Direct download; confirm=t skips the "too big to scan for viruses" page.
+const DRIVE_FILE := "https://drive.usercontent.google.com/download?id=%s&export=download&confirm=t"
 const DIR := "user://update"
 
 var _http: HTTPRequest
@@ -28,6 +41,12 @@ var _new_version := ""
 ## Incremental update: a small FDL patch (see FdlSource) applied to the installed exe.
 var _patch := false
 var _patch_path := ""
+## GitHub assets of the new version, the fallback when the Drive can't serve them.
+var _gh_zip := ""
+var _gh_patch := ""
+var _from_drive := false
+var _force_full := false
+var _in_bin := false
 
 
 func _ready() -> void:
@@ -112,30 +131,102 @@ func _on_release_info(result: int, code: int, _headers: PackedStringArray, body:
 	if FileAccess.file_exists(flag):
 		DirAccess.remove_absolute(flag)
 		patch_url = ""
-	if patch_url != "":
-		_patch = true
-		url = patch_url
-	if url == "":
-		print("[UPDATE] %s n'a pas de zip téléchargeable" % tag)
-		return
+		_force_full = true
+	_gh_zip = url
+	_gh_patch = patch_url
 	_new_version = tag
-	print("[UPDATE] nouvelle version %s -> téléchargement" % tag)
-	_build_overlay(tag)
+	# Same choice on the Drive: this version's patch from the installed one, else its zip.
+	_drive_get(DRIVE_FOLDER)
+
+
+func _drive_get(folder: String) -> void:
+	_http.request_completed.connect(_on_drive_list)
+	if _http.request(DRIVE_LIST % folder, ["User-Agent: Mozilla/5.0 FerroArena/%s" % Game.GAME_VERSION]) != OK:
+		_http.request_completed.disconnect(_on_drive_list)
+		_on_drive_list(HTTPRequest.RESULT_CANT_CONNECT, 0, PackedStringArray(), PackedByteArray())
+
+
+## Drive folder listing -> {file name: file id}.
+static func parse_drive_folder(html: String) -> Dictionary:
+	var out := {}
+	var re := RegEx.create_from_string("id=\"entry-([A-Za-z0-9_-]+)\".*?flip-entry-title\">([^<]+)<")
+	for m in re.search_all(html):
+		out[m.get_string(2).strip_edges()] = m.get_string(1)
+	return out
+
+
+func _on_drive_list(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if _http.request_completed.is_connected(_on_drive_list):
+		_http.request_completed.disconnect(_on_drive_list)
+	var files := parse_drive_folder(body.get_string_from_utf8()) if result == HTTPRequest.RESULT_SUCCESS and code == 200 else {}
+	if not _in_bin:
+		_in_bin = true
+		if files.has(DRIVE_BIN):
+			_drive_get(files[DRIVE_BIN])
+			return
+		files = {}
+	var ver := _new_version.trim_prefix("v")
+	var drive_patch: String = files.get("FerroArena-patch-%s-to-%s.fdl" % [Game.GAME_VERSION, ver], "")
+	var drive_zip: String = files.get("FerroArena-%s.zip" % ver, "")
+	if _force_full:
+		drive_patch = ""
+	var url := ""
+	if _gh_patch != "" or drive_patch != "":
+		_patch = true
+		url = DRIVE_FILE % drive_patch if drive_patch != "" else _gh_patch
+	else:
+		url = DRIVE_FILE % drive_zip if drive_zip != "" else _gh_zip
+	_from_drive = url.begins_with("https://drive.")
+	if url == "":
+		print("[UPDATE] %s n'a pas de zip téléchargeable" % _new_version)
+		return
+	print("[UPDATE] nouvelle version %s -> téléchargement %s (%s)" % [_new_version, "du patch" if _patch else "complet", "Google Drive" if _from_drive else "GitHub"])
+	_build_overlay(_new_version)
+	_download(url)
+
+
+func _download(url: String) -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(DIR))
 	_zip_path = ProjectSettings.globalize_path(DIR + ("/patch.fdl" if _patch else "/FerroArena.zip"))
 	_http.download_file = _zip_path
 	_http.timeout = 0.0
 	_http.body_size_limit = -1
-	_http.request_completed.connect(_on_downloaded)
+	if not _http.request_completed.is_connected(_on_downloaded):
+		_http.request_completed.connect(_on_downloaded)
 	_downloading = true
-	var err := _http.request(url, ["User-Agent: FerroArena/%s" % Game.GAME_VERSION])
+	var err := _http.request(url, ["User-Agent: Mozilla/5.0 FerroArena/%s" % Game.GAME_VERSION])
 	if err != OK:
 		_fail("téléchargement impossible (%d)" % err)
 
 
+## The file really is a zip ("PK") / an FDL patch (gzip stream, 1F 8B; "FDL1" is inside it), not a
+## Drive error or warning page.
+func _valid_download() -> bool:
+	var f := FileAccess.open(_zip_path, FileAccess.READ)
+	if f == null or f.get_length() < 16:
+		return false
+	var head := f.get_buffer(4)
+	f.close()
+	if _patch:
+		return head[0] == 0x1F and head[1] == 0x8B
+	return head[0] == 0x50 and head[1] == 0x4B
+
+
 func _on_downloaded(result: int, code: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
 	_downloading = false
-	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+	var ok := result == HTTPRequest.RESULT_SUCCESS and code == 200 and _valid_download()
+	if not ok and _from_drive:
+		# Drive refused (quota, removed file, warning page): same file from GitHub instead.
+		var gh := _gh_patch if _patch else _gh_zip
+		if _patch and gh == "":
+			_patch = false
+			gh = _gh_zip
+		print("[UPDATE] Google Drive indisponible (résultat %d, code %d) -> GitHub" % [result, code])
+		_from_drive = false
+		if gh != "":
+			_download(gh)
+			return
+	if not ok:
 		_fail("téléchargement échoué (résultat %d, code %d)" % [result, code])
 		return
 	_title.text = "INSTALLATION…"

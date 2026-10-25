@@ -581,7 +581,7 @@ const FILES := {
 	"chest_open": "res://assets/audio/impacts/misc_03.ogg",
 }
 const MUSIC := {
-	"menu": "res://assets/audio/music/menu_loop.wav",
+	"menu": "res://assets/audio/music/synthwave.ogg",
 	"match": "res://assets/audio/music/match_ambient.mp3",
 }
 
@@ -664,6 +664,16 @@ func _load_sets() -> void:
 					arr.append(load(p))
 			if not arr.is_empty():
 				streams["%s_%d" % [kind, v]] = arr
+	# Zombie voices (CC0, OpenGameArt, see assets/audio/zombie/LICENSE.txt): random pick per play.
+	for set in [["zmb_moan", ["moan", "groan"]], ["zmb_snarl", ["snarl"]], ["zmb_attack", ["attack"]], ["zmb_death", ["death"]]]:
+		var arr := []
+		for prefix in set[1]:
+			for i in range(1, 13):
+				var p := "res://assets/audio/zombie/%s_%d.ogg" % [prefix, i]
+				if ResourceLoader.exists(p):
+					arr.append(load(p))
+		if not arr.is_empty():
+			streams[set[0]] = arr
 	if ResourceLoader.exists("res://assets/audio/ambience/wind.ogg"):
 		var wind := load("res://assets/audio/ambience/wind.ogg") as AudioStreamOggVorbis
 		if wind:
@@ -759,6 +769,14 @@ func apply_volumes() -> void:
 
 
 ## Cross-fades to a music track ("" = silence).
+## Eases the current music track to `volume_db` (the launch screen starts it low, the menu
+## brings it up).
+func music_to(volume_db: float, fade := 3.0) -> void:
+	for pl in [_music_a, _music_b]:
+		if pl.playing and pl.volume_db > -60.0:
+			create_tween().tween_property(pl, "volume_db", volume_db, fade)
+
+
 func play_music(id: String, volume_db := -10.0, fade := 2.0) -> void:
 	if id == _music_id:
 		return

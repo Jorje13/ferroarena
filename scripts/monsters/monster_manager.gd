@@ -30,6 +30,13 @@ var _spawn_cd := 0.0
 var _snap_t := 0.0
 var _rng := RandomNumberGenerator.new()
 var _mon_test_done := false
+## Where the current wave comes from (Vector3.INF before the first one), shown on every peer by
+## a light column (BEAM_TIME s), a compass mark and the wave announcement.
+var wave_origin := Vector3.INF
+const ORIGIN_RADIUS := 9.0
+const BEAM_TIME := 14.0
+var _beam: MeshInstance3D
+signal wave_origin_changed
 
 signal wave_changed
 
@@ -58,6 +65,7 @@ func alive_list() -> Array:
 
 ## Round start: wipe everything.
 func server_reset() -> void:
+	wave_origin = Vector3.INF
 	for id in monsters.keys():
 		_net_remove.rpc(id)
 	_queue.clear()
@@ -77,9 +85,15 @@ func server_go() -> void:
 	_sync_wave()
 
 
+## Squad size (players in the match): more survivors, more and tougher monsters, faster.
+func _squad() -> int:
+	return maxi(1, arena.players.size())
+
+
 func _plan_wave(w: int) -> Array:
-	var n := maxi(1, arena.players.size())
-	var scale := 0.75 + 0.25 * n
+	var n := _squad()
+	# Solo x1, duo x1.35, four x2.05 monsters.
+	var scale := 0.6 + 0.35 * n + 0.05 * n * n
 	var count := int((2.5 + 2.5 * w) * scale)
 	var fauch := int(float(w) * 0.55 * (0.8 + 0.2 * n))
 	if w < 2:
@@ -97,7 +111,7 @@ func _plan_wave(w: int) -> Array:
 
 
 func _hp_scale() -> float:
-	return 1.0 + 0.1 * float(wave - 1)
+	return (1.0 + 0.1 * float(wave - 1)) * (1.0 + 0.12 * float(_squad() - 1))
 
 
 func _server_start_wave() -> void:
@@ -106,7 +120,10 @@ func _server_start_wave() -> void:
 	total = _queue.size()
 	left = total
 	phase = Phase.WAVE
-	_spawn_cd = 1.5
+	_spawn_cd = 2.5
+	# The whole wave comes from one place, out of the survivors' sight, shown to everyone.
+	wave_origin = _spawn_point(38.0, 65.0)
+	_net_wave_origin.rpc(wave_origin)
 	_sync_wave()
 
 
@@ -139,6 +156,9 @@ func _server_break() -> void:
 
 
 func _process(delta: float) -> void:
+	# Every peer: night falls when a wave starts, day comes back between waves (~6 s).
+	var dark := 1.0 if phase == Phase.WAVE else 0.0
+	arena.map.set_night(move_toward(arena.map.night, dark, delta / 6.0))
 	if not multiplayer.is_server():
 		return
 	if arena.match_mgr.state != MatchManager.State.LIVE:
@@ -162,9 +182,10 @@ func _process(delta: float) -> void:
 				_server_start_wave()
 		Phase.WAVE:
 			_spawn_cd -= delta
-			var cap := 16 + 2 * arena.players.size()
+			var cap := 14 + 4 * _squad()
 			if not _queue.is_empty() and _spawn_cd <= 0.0 and alive_list().size() < cap:
-				_spawn_cd = clampf(1.4 - 0.08 * wave, 0.45, 1.4)
+				# Pours out of the wave's origin in quick succession.
+				_spawn_cd = clampf(0.5 - 0.02 * wave, 0.2, 0.5) / (0.85 + 0.15 * _squad())
 				_server_spawn(_queue.pop_back())
 			if _queue.is_empty() and alive_list().is_empty():
 				if wave >= WAVES:
@@ -180,7 +201,7 @@ func _process(delta: float) -> void:
 
 
 ## A random navmesh point out of the survivors' sight and a good way off.
-func _spawn_point(min_d := 22.0) -> Vector3:
+func _spawn_point(min_d := 22.0, max_d := INF) -> Vector3:
 	var map := arena.get_world_3d().navigation_map
 	var space := arena.get_world_3d().direct_space_state
 	var best := Vector3.INF
@@ -201,7 +222,7 @@ func _spawn_point(min_d := 22.0) -> Vector3:
 				seen = space.intersect_ray(q).is_empty()
 		if nearest == INF:
 			nearest = 40.0
-		var score := minf(nearest, 55.0) - (45.0 if seen else 0.0) - (60.0 if nearest < min_d else 0.0) + _rng.randf() * 6.0
+		var score := minf(nearest, 55.0) - (45.0 if seen else 0.0) - (60.0 if nearest < min_d else 0.0) - maxf(0.0, nearest - max_d) * 2.0 + _rng.randf() * 6.0
 		if score > best_score:
 			best_score = score
 			best = c
@@ -211,9 +232,100 @@ func _spawn_point(min_d := 22.0) -> Vector3:
 	return best
 
 
+## A monster that stopped making headway (see Monster._watchdog) comes back 22-35 m from its
+## prey on the navmesh, out of every survivor's sight; snapped there on every peer.
+func server_relocate(m: Monster, prey: Player) -> void:
+	if prey == null or not is_instance_valid(prey):
+		return
+	var map := arena.get_world_3d().navigation_map
+	var space := arena.get_world_3d().direct_space_state
+	var best := Vector3.INF
+	for i in 16:
+		var a := _rng.randf() * TAU
+		var c := NavigationServer3D.map_get_closest_point(map, prey.global_position + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(22.0, 35.0))
+		if c == Vector3.ZERO:
+			continue
+		var seen := false
+		for p: Player in arena.players:
+			if (p.alive or p.downed) and p.global_position.distance_to(c) < 60.0:
+				if space.intersect_ray(PhysicsRayQueryParameters3D.create(c + Vector3(0, 1.6, 0), p.chest_position(), 1)).is_empty():
+					seen = true
+					break
+		best = c
+		if not seen:
+			break
+	if best == Vector3.INF:
+		return
+	if Game.debug.has("log_bots"):
+		print("[MONSTRE] %d replacé de %s vers %s" % [m.id, str(m.global_position.round()), str(best.round())])
+	m.velocity = Vector3.ZERO
+	m.global_position = best + Vector3(0, 0.1, 0)
+	m.net_pos = m.global_position
+	m._path = PackedVector3Array()
+	m._repath = 0.0
+	_net_teleport.rpc(m.id, m.global_position)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _net_teleport(id: int, pos: Vector3) -> void:
+	var m := get_monster(id)
+	if m:
+		m.global_position = pos
+		m.net_pos = pos
+
+
+## A navmesh point within ORIGIN_RADIUS of the wave's origin.
+func _near_origin() -> Vector3:
+	if wave_origin == Vector3.INF:
+		return _spawn_point()
+	var map := arena.get_world_3d().navigation_map
+	var a := _rng.randf() * TAU
+	var p := wave_origin + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(1.0, ORIGIN_RADIUS)
+	var q := NavigationServer3D.map_get_closest_point(map, p)
+	return q if q != Vector3.ZERO else wave_origin
+
+
+@rpc("authority", "call_local", "reliable")
+func _net_wave_origin(pos: Vector3) -> void:
+	wave_origin = pos
+	wave_origin_changed.emit()
+	_origin_beam(pos)
+	Audio.play_3d("mon_screech", pos + Vector3(0, 2, 0), 12.0, 400.0, 0.0, 0.6)
+
+
+## Red light column over a wave's origin, fading out after a while.
+func _origin_beam(pos: Vector3) -> void:
+	if _beam and is_instance_valid(_beam):
+		_beam.queue_free()
+	var mi := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.6
+	cyl.bottom_radius = 1.6
+	cyl.height = 70.0
+	cyl.radial_segments = 16
+	cyl.cap_top = false
+	cyl.cap_bottom = false
+	mi.mesh = cyl
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_color = Color(1.0, 0.12, 0.05, 0.0)
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	arena.add_child(mi)
+	mi.global_position = pos + Vector3(0, 35.0, 0)
+	_beam = mi
+	var tw := mi.create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.45, 0.6)
+	tw.tween_interval(BEAM_TIME)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 2.5)
+	tw.tween_callback(mi.queue_free)
+
+
 func _server_spawn(kind: int) -> void:
-	# Rôdeurs are slow: they may rise closer (still out of sight).
-	var pos := _spawn_point(13.0 if kind == 2 else 22.0)
+	var pos := _near_origin()
 	var yaw := _rng.randf() * TAU
 	var id := _next_id
 	_next_id += 1
@@ -325,7 +437,11 @@ func server_sound(id: int, snd: String) -> void:
 func _net_sound(id: int, snd: String) -> void:
 	var m := get_monster(id)
 	if m:
-		Audio.play_3d(snd, m.global_position + Vector3(0, 1.2, 0), 1.0, 60.0, 0.1, [0.8, 1.0, 0.65][m.kind])
+		# Idle growls: the Rôdeur moans, the hunters snarl (deep for the Faucheur, shrill for the
+		# Bondisseur).
+		if snd == "mon_growl":
+			snd = "zmb_moan" if m.kind == 2 else "zmb_snarl"
+		Audio.play_3d(snd, m.global_position + Vector3(0, 1.2, 0), 3.0, 60.0, 0.1, [0.75, 1.2, 0.95][m.kind])
 
 
 func server_fx(id: int, kind: String, pos: Vector3, dir: Vector3) -> void:

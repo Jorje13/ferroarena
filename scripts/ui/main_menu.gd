@@ -45,16 +45,25 @@ var _help_panel: Control
 
 
 func _ready() -> void:
+	Game.mark("menu: début")
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	Audio.play_music("menu", -9.0, 1.5)
+	Audio.play_music("menu", -14.0, 1.5)
+	# Coming from the launch screen the theme is already playing, softly: bring it up gently.
+	Audio.music_to(-14.0, 4.0)
 	_build_background()
+	Game.mark("menu: décor construit")
 	_build_ui()
+	Game.mark("menu: interface construite")
+	get_tree().process_frame.connect(func(): Game.mark("menu: première image"), CONNECT_ONE_SHOT)
 	Game.lobby_changed.connect(_refresh_lobby)
 	Game.status_message.connect(func(t): _status.text = t)
 	if Game.pending_message != "":
 		_status.text = Game.pending_message
 		Game.pending_message = ""
 	_refresh_lobby()
+	# Debug: --menu_solo starts a solo match from the menu after 3 s (the players' real path).
+	if Game.debug.has("menu_solo"):
+		get_tree().create_timer(3.0).timeout.connect(Game.start_solo)
 	# Debug: --menu_page=play|opts opens that page (with --menu_shot for captures).
 	if Game.debug.has("menu_page"):
 		_show_page(str(Game.debug.menu_page))

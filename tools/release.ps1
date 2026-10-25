@@ -7,12 +7,14 @@
 #           (la release est alors remplacee si elle existe deja).
 # -Message  message du commit et notes de la release.
 # -SkipExport  republie le dernier export sans reexporter.
+# -DriveDir  dossier "bin" du Google Drive partage (synchronise), ou les telechargements sont servis.
 # Prerequis : Git, GitHub CLI connecte (gh auth login), modeles d'export Godot installes.
 
 param(
 	[string]$Version = "",
 	[string]$Message = "",
-	[switch]$SkipExport
+	[switch]$SkipExport,
+	[string]$DriveDir = "G:\Mon Drive\Ferro Arena\bin"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +41,12 @@ if ($Message -eq "") { $Message = "Ferro Arena $ver" }
 "== Version $ver =="
 
 # 2. Code -> GitHub (le tag de la release pointera sur ce commit)
+# GitHub refuse tout fichier de plus de 100 Mo : on s'arrete avant de commiter, avec la solution.
+$big = Get-ChildItem (Join-Path $proj 'assets') -Recurse -File | Where-Object { $_.Length -gt 95MB }
+if ($big) {
+	$big | ForEach-Object { "  {0}  ({1:N0} Mo)" -f $_.FullName, ($_.Length / 1MB) }
+	throw "Fichier(s) trop gros pour GitHub (100 Mo max). Pour un .glb : Godot --headless -s tools/shrink_glb.gd -- --file=<in.glb> --out=<out.glb>"
+}
 & $git add -A
 & $git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) {
@@ -112,3 +120,23 @@ if ($exists) {
 }
 if ($LASTEXITCODE -ne 0) { throw "La release a echoue" }
 "Livre : https://github.com/$repo/releases/tag/$tag"
+
+# 6. Google Drive : les joueurs telechargent depuis le sous-dossier "bin" du dossier partage
+# (ferroarena.jrjx.me) quand il contient les fichiers de cette version, sinon depuis GitHub (voir
+# updater.gd). Noms attendus : FerroArena-<version>.zip et FerroArena-patch-<ancienne>-to-<version>.fdl.
+# Copies dans le dossier synchronise par Google Drive pour ordinateur (-DriveDir), les fichiers des
+# versions precedentes y sont retires ; sans lui, prepares dans build\drive pour un depot a la main.
+$drive = $DriveDir
+$synced = Test-Path -LiteralPath $drive
+if (-not $synced) {
+	$drive = Join-Path (Split-Path $build -Parent) 'drive'
+	if (Test-Path $drive) { Remove-Item $drive -Recurse -Force }
+	New-Item -ItemType Directory -Force $drive | Out-Null
+}
+$keep = @("FerroArena-$ver.zip") + ($patches | ForEach-Object { Split-Path $_ -Leaf })
+Get-ChildItem -LiteralPath $drive -File | Where-Object { $_.Name -match '^FerroArena-.*\.(zip|fdl)$' -and $keep -notcontains $_.Name } | Remove-Item -Force
+Copy-Item -LiteralPath $zip -Destination (Join-Path $drive "FerroArena-$ver.zip") -Force
+foreach ($p in $patches) { Copy-Item -LiteralPath $p -Destination $drive -Force }
+if ($synced) { "== Copie dans Google Drive : $drive (envoi en arriere-plan par Google Drive pour ordinateur) ==" }
+else { "== Google Drive introuvable ($DriveDir) : fichiers a deposer a la main dans le dossier bin ==" }
+Get-ChildItem -LiteralPath $drive -File | ForEach-Object { "  {0}  ({1:N0} Mo)" -f $_.Name, ($_.Length / 1MB) }

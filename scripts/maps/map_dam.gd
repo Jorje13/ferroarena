@@ -55,6 +55,10 @@ func plan_layout() -> void:
 	mirrored(Vector2(-33, -16), 0.0, func(p, y): plan_building(p, Vector2(9, 6), 1, y, 202))
 	mirrored(Vector2(27, -40), 0.0, func(p, y): plan_building(p, Vector2(6, 6), 1, y, 303))
 	mirrored(Vector2(-42, 22), PI / 2, func(p, y): plan_building(p, Vector2(9, 6), 2, y, 404))
+	# Points of interest (first free candidate, mirrored), before the random buildings.
+	Poi.plan(self, "gas", [Vector2(46, -12), Vector2(48, -24), Vector2(46, 0)])
+	Poi.plan(self, "scrap", [Vector2(-40, -50), Vector2(-46, -36), Vector2(-28, -54)])
+	Poi.plan(self, "flats", [Vector2(26, -52), Vector2(14, -54), Vector2(-48, -4)])
 	plan_extra_buildings(4)
 
 
