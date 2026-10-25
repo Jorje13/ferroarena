@@ -9,7 +9,7 @@ Une seule arme, le **Ferro** : un tir par chargeur, un rechargement lent, projec
 - **Battle royale** : chacun pour soi, bots au choix, départs répartis sur la carte, zone qui se resserre, le dernier en vie gagne.
 - **Prop hunt** : un chasseur tiré au sort contre des props qui se transforment en objets de la carte (**E**). Le chasseur est aveugle 30 s, un tir tue, les props sifflent toutes les 20 s. Sans bots, 2 joueurs minimum.
 
-- **Survie zombies** : coopération, 10 vagues de monstres (Faucheurs aux griffes qui balayent le sol, Bondisseurs qui bondissent). Entre les vagues, les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots.
+- **Survie zombies** : coopération, 10 vagues de monstres (Faucheurs aux griffes qui balayent le sol, Bondisseurs qui bondissent, Rôdeurs lents qui marchent droit sur vous). Tout le monde démarre dans la base, autour de l'établi : entre les vagues (30 s), on y dépense la ferraille gagnée sur les monstres en objets, améliorations du Ferro (silencieux, crosse, canon renforcé, mécanisme graissé, balles à pointe creuse) et bonus de survie (blindage, soins, récupérateur). Les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots.
 
 Les bots ont quatre niveaux de difficulté (Facile, Normal, Difficile, Expert).
 

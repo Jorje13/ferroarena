@@ -7,7 +7,7 @@ signal all_peers_ready
 
 const DEFAULT_PORT := 7777
 ## Bump when the network protocol / gameplay changes: mismatched builds are refused.
-const GAME_VERSION := "0.25.0"
+const GAME_VERSION := "0.26.0"
 const MAX_CLIENTS := 19
 ## Biggest team (format 10v10).
 const MAX_TEAM := 10
@@ -130,7 +130,10 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
-	if debug.has("autosolo"):
+	# Debug: --run_tool=res://tools/x.gd runs a measuring Node script with the autoloads loaded.
+	if debug.has("run_tool"):
+		get_tree().root.add_child.call_deferred((load(str(debug.run_tool)) as GDScript).new())
+	elif debug.has("autosolo"):
 		_start_debug_solo.call_deferred()
 	elif debug.has("host"):
 		_start_debug_host.call_deferred()

@@ -18,6 +18,8 @@ func _bone(n: String) -> int:
 
 
 var _reach := Vector3.ZERO
+var _push := Vector3.ZERO
+var _slide := 0.0
 var _delta_t := 0.016
 
 
@@ -27,6 +29,20 @@ func _reach_offset(sk: Skeleton3D, inv: Transform3D, gun_s: Transform3D) -> Vect
 	var sh_l := sk.get_bone_global_pose(_bone("upperarm_l")).origin
 	var len_r := sh_r.distance_to(sk.get_bone_global_pose(_bone("lowerarm_r")).origin) + sk.get_bone_global_pose(_bone("lowerarm_r")).origin.distance_to(sk.get_bone_global_pose(_bone("hand_r")).origin)
 	var len_l := sh_l.distance_to(sk.get_bone_global_pose(_bone("lowerarm_l")).origin) + sk.get_bone_global_pose(_bone("lowerarm_l")).origin.distance_to(sk.get_bone_global_pose(_bone("hand_l")).origin)
+	# Short arms first grab the fore-end closer to the receiver, as a real shooter does;
+	# whatever is still out of reach moves the rifle.
+	var sup := 1 if rig.shoulder_k < 0.5 else 0
+	var sup_sh := sh_l if sup == 1 else sh_r
+	var sup_reach := (len_l if sup == 1 else len_r) * 0.95
+	rig.gun.global_transform = sk.global_transform * gun_s
+	var want_slide := 0.0
+	while want_slide < CharacterRig.SUPPORT_SLIDE_MAX:
+		rig.set_support_slide(want_slide)
+		if sup_sh.distance_to(inv * rig.hand_target(sup)) <= sup_reach:
+			break
+		want_slide += 0.01
+	_slide = lerpf(_slide, want_slide, 1.0 - exp(-_delta_t * 15.0))
+	rig.set_support_slide(_slide)
 	var off := Vector3.ZERO
 	for it in 5:
 		rig.gun.global_transform = sk.global_transform * (Transform3D(Basis(), off) * gun_s)
@@ -78,6 +94,11 @@ func _modify() -> void:
 	if rig.blade > 0.001:
 		_rotate_global(sk, _bone("neck_01"), Basis(Vector3.UP, rig.blade * 0.5))
 		_rotate_global(sk, _bone("Head"), Basis(Vector3.UP, rig.blade * 0.5))
+	# Cheek weld: shouldered, the head leans onto the stock (towards the rifle's side) and dips.
+	var cheek := rig.blade / CharacterRig.BLADE_AIM
+	if absf(cheek) > 0.01:
+		_rotate_global(sk, _bone("neck_01"), Basis(Vector3(0, 0, 1), cheek * 0.1) * Basis(Vector3.RIGHT, absf(cheek) * 0.05))
+		_rotate_global(sk, _bone("Head"), Basis(Vector3(0, 0, 1), cheek * 0.12) * Basis(Vector3.RIGHT, absf(cheek) * 0.06))
 	# 2. Spine: aim pitch + hit flinch + lean.
 	var p := rig.spine_pitch
 	for n in ["spine_02", "spine_03"]:
@@ -95,14 +116,20 @@ func _modify() -> void:
 		var delta := (sp.basis.orthonormalized() * rest.basis.orthonormalized().inverse()).get_rotation_quaternion()
 		rig.pack.global_transform = sk.global_transform * Transform3D(Basis(Quaternion.IDENTITY.slerp(delta, 0.5)), sp.origin)
 	# 3. Gun placement (skeleton space -> global).
-	var chest := sp.origin
-	var gun_s := rig.gun_transform(chest)
+	var gun_s := rig.gun_transform(sp)
 	var inv := sk.global_transform.affine_inverse()
 	# Short-armed bodies: slide the whole rifle towards the shoulders until both hands
 	# reach their grips (a rigid gun, so the grips never drift off the weapon).
 	var want_off := _reach_offset(sk, inv, gun_s)
 	_reach = _reach.lerp(want_off, 1.0 - exp(-_delta_t * 20.0))
 	gun_s = Transform3D(Basis(), _reach) * gun_s
+	# Never through the chest: out to the measured torso surface (at once), eased back after.
+	var push := rig.clip_push(gun_s)
+	_push = push if push.length() >= _push.length() else _push.lerp(push, 1.0 - exp(-_delta_t * 12.0))
+	gun_s = Transform3D(Basis(), _push) * gun_s
+	if Game.debug.has("log_reach") and Engine.get_process_frames() % 60 == 0:
+		print("[CLIP] skin %d slide %.2f pocket %s reach %s push %s butt %s" % [rig.skin, _slide, str(rig._torso.pocket), str(_reach.snapped(Vector3.ONE * 0.01)), str(push.snapped(Vector3.ONE * 0.01)),
+			str((rig._chest_frame.affine_inverse() * (gun_s * Vector3(0, rig._butt_y, rig._stock_back))).snapped(Vector3.ONE * 0.01))])
 	rig.gun.global_transform = sk.global_transform * gun_s
 	# 4. Arm IK onto the grips.
 	var tr: Vector3 = inv * rig.hand_target(0)

@@ -95,6 +95,8 @@ func setup(p_team: int, p_name: String, p_loadout: Dictionary = {}) -> void:
 	_build_team_marks(accent)
 
 	_build_gun(accent)
+	_torso = _torso_profile(skin, model, skeleton)
+	_chest_rest_inv = skeleton.get_bone_global_rest(skeleton.find_bone(bone_name("spine_03"))).basis.orthonormalized().inverse()
 	_build_hand_items()
 	_merge_static_meshes()
 
@@ -214,6 +216,8 @@ const BLADE_AIM := 0.55
 const TORSO_TWIST_MAX := 1.2
 var _recoil := 0.0
 var _recoil_v := 0.0
+## Weapon inertia (rad): x = muzzle yaw lag behind turns, y = pitch (bob, lag, landings).
+var _sway := Vector2.ZERO
 ## Torso rock-back from the shot, read by RaiderIK.
 var kick_lean := 0.0
 var _vault_comp := 0.0
@@ -647,6 +651,12 @@ func _build_gun(accent: Color) -> void:
 	var weapon := int(loadout.weapon)
 	_muzzle_z = [-0.87, -0.82, -0.84][weapon]
 	_stock_back = [0.33, 0.39, 0.36][weapon]
+	_butt_y = [-0.075, -0.085, -0.13][weapon]
+	# Anti-clip probes (gun frame): butt plate top / centre, comb, grip, fore-end.
+	var by := _butt_y
+	# (The butt toe may dig into the pec a little, as a real one does.)
+	_clip_pts = [Vector3(0, -0.02, _stock_back), Vector3(0, by, _stock_back - 0.01), Vector3(0, -0.02, _stock_back * 0.5),
+		Vector3(0, -0.06, 0.0), Vector3(0, -0.03, -0.25), Vector3(0, -0.02, -0.5)]
 	gun = Node3D.new()
 	gun.top_level = true
 	add_child(gun)
@@ -689,6 +699,7 @@ func _build_gun(accent: Color) -> void:
 	gun.add_child(grip_r)
 	grip_l = Node3D.new()
 	grip_l.position = Vector3(0, -0.07, -0.22) if weapon == 1 else LONGSHOT_GRIP_L
+	_grip_l_z = grip_l.position.z
 	b.add_child(grip_l)
 
 
@@ -705,6 +716,13 @@ var _muzzle_z := -0.82
 ## Trigger -> butt distance: the aimed rifle sits with its butt in the shoulder pocket.
 var _stock_back := 0.39
 var _break_open := true
+var _grip_l_z := -0.15
+## How far (m) the supporting hand slides back along the fore-end (short arms, see RaiderIK).
+const SUPPORT_SLIDE_MAX := 0.13
+
+
+func set_support_slide(s: float) -> void:
+	grip_l.position.z = _grip_l_z + s
 
 var _gun_barrels: Node3D
 var _silencer: Node3D
@@ -881,6 +899,46 @@ func _step_recoil(delta: float) -> void:
 		_recoil_v += (-_recoil * 420.0 - _recoil_v * 27.0) * h
 		_recoil += _recoil_v * h
 	kick_lean = _recoil * 0.17
+
+
+var _sway_v := Vector2.ZERO
+var _prev_pitch := 0.0
+var _was_air := false
+var _breath := 0.0
+
+
+## Weapon inertia, a soft spring on the rifle's yaw / pitch (rad) read by gun_transform:
+## the muzzle trails turns and pitch changes, bobs with the stride, dips on landings and
+## breathes while held still on target.
+func _step_sway(p: Player, speed: float, delta: float) -> void:
+	if delta <= 0.0:
+		return
+	var live := p.alive and not p.downed
+	var hold := (1.0 - _sling) * (1.0 if live else 0.0)
+	var pitch_rate := (_pitch - _prev_pitch) / delta
+	_prev_pitch = _pitch
+	var want := Vector2.ZERO
+	# Lag: shouldered aim stays tighter than the loose low-ready carry.
+	var lag := lerpf(0.05, 0.022, _aim)
+	want.x = clampf(-p.yaw_rate * lag, -0.14, 0.14)
+	want.y = clampf(-pitch_rate * lag * 0.6, -0.1, 0.1)
+	if p.grounded() and speed > 0.5:
+		# Two dips per stride (one per foot), muzzle swinging a little side to side.
+		var amp := clampf(speed / 6.0, 0.0, 1.0) * (1.0 - _aim * 0.65)
+		want.y += sin(_phase * 2.0) * 0.035 * amp
+		want.x += sin(_phase) * 0.03 * amp
+	_breath += delta * (1.4 + _sprint)
+	want.y += sin(_breath) * 0.006 * (1.0 - clampf(speed, 0.0, 1.0))
+	want *= hold
+	var air := not p.grounded()
+	if _was_air and not air and live:
+		# Landing: the rifle's weight carries the muzzle down, then it springs back.
+		_sway_v.y -= 1.6 * (1.0 - _aim * 0.5)
+	_was_air = air
+	# Under-damped spring towards the target (a touch of overshoot reads as weight).
+	_sway_v += ((want - _sway) * 160.0 - _sway_v * 18.0) * minf(delta, 0.05)
+	_sway += _sway_v * minf(delta, 0.05)
+	_sway = _sway.clamp(Vector2(-0.25, -0.25), Vector2(0.25, 0.25))
 
 
 # ---------------------------------------------------------------- API used by Player
@@ -1118,6 +1176,8 @@ func update_pose(p: Player, delta: float) -> void:
 	_aim_idle = lerpf(_aim_idle, _aim * (1.0 - clampf(speed / 1.2, 0.0, 1.0)), k)
 	anim.set("parameters/aim_idle/blend_amount", _aim_idle)
 
+	_step_sway(p, speed, delta)
+
 	# Footsteps
 	_phase += speed / maxf(1.2, 1.6 + _sprint) * TAU * delta
 	var step := int(_phase / PI)
@@ -1128,17 +1188,24 @@ func update_pose(p: Player, delta: float) -> void:
 			Audio.play_step(p.global_position, p.surface_underfoot(), -11.0 + _sprint * 4.0 - (6.0 if p.crouching else 0.0))
 
 
-## Rifle transform in skeleton space, from the (animated) chest bone origin.
-func gun_transform(chest: Vector3) -> Transform3D:
-	var pivot := Vector3(0, 0.13, 0)
-	var pb := Basis(Vector3.RIGHT, _pitch)
-	var aimed := Transform3D(pb, pivot + pb * Vector3(0.15, -0.02, -_stock_back))
-	# Low ready and sprint carry keep the butt tucked in the shoulder pocket (the rifle swings
-	# about it), so the stock never pokes out behind the raider.
-	var r_ready := Basis.from_euler(Vector3(-0.42, 0.62, 0.18))
-	var ready := Transform3D(r_ready, Vector3(0.26, 0.03, -0.3) - r_ready * Vector3(0, 0, _stock_back))
-	var r_sprint := Basis.from_euler(Vector3(-0.4, 0.75, 0.45))
-	var sprint := Transform3D(r_sprint, Vector3(0.15, 0.03, -0.03) - r_sprint * Vector3(0, 0, _stock_back))
+## Rifle transform in skeleton space, from the (animated) chest bone pose.
+func gun_transform(chest: Transform3D) -> Transform3D:
+	_chest_frame = Transform3D(chest.basis.orthonormalized() * _chest_rest_inv, chest.origin)
+	# gx space: game frame (-Z forward) on the chest origin, turned with the upper body.
+	var outer := Transform3D(FLIP, chest.origin) * Transform3D(Basis(Vector3.UP, torso_twist), Vector3.ZERO)
+	var outer_inv := outer.affine_inverse()
+	var pk: Vector3 = _torso.pocket
+	pk.x = lerpf(pk.x, -pk.x, shoulder_k)
+	var butt := Vector3(0, _butt_y, _stock_back)
+	# The butt plate rides the shoulder pocket, ON the chest surface measured for this body:
+	# shouldered, it sits in the pocket and the rifle pitches about it; at low ready and in the
+	# sprint carry it drops a little lower, the muzzle swung down / across.
+	var pb := Basis(Vector3.UP, _sway.x) * Basis(Vector3.RIGHT, _pitch + _sway.y)
+	var aimed := Transform3D(pb, _anchor(outer_inv, pk) - pb * butt)
+	var r_ready := Basis.from_euler(Vector3(-0.42 + _sway.y, 0.62 + _sway.x, 0.18))
+	var ready := Transform3D(r_ready, _anchor(outer_inv, pk + Vector3(0, -0.07, 0.03)) - r_ready * butt)
+	var r_sprint := Basis.from_euler(Vector3(-0.4 + _sway.y, 0.75 + _sway.x, 0.45))
+	var sprint := Transform3D(r_sprint, _anchor(outer_inv, pk + Vector3(0, -0.05, 0.04)) - r_sprint * butt)
 	var slung := Transform3D(Basis.from_euler(Vector3(1.2, 0.0, 0.9)), Vector3(0.0, 0.05, 0.32))
 	var gx := ready.interpolate_with(aimed, _aim)
 	gx = gx.interpolate_with(sprint, _sprint * (1.0 - _aim))
@@ -1163,10 +1230,116 @@ func gun_transform(chest: Vector3) -> Transform3D:
 		gx = gx.interpolate_with(gm, shoulder_k)
 		var arc := sin(PI * shoulder_k)
 		gx.origin += Vector3(0.0, 0.12 * arc, -0.07 * arc)
-	_pouch_s = chest + FLIP * Vector3(-0.12, -0.25, -0.12)
-	_pouch_r = chest + FLIP * Vector3(0.12, -0.25, -0.12)
+	_pouch_s = chest.origin + FLIP * Vector3(-0.12, -0.25, -0.12)
+	_pouch_r = chest.origin + FLIP * Vector3(0.12, -0.25, -0.12)
 	# The rifle rides with the twisted upper body.
-	return Transform3D(FLIP, chest) * Transform3D(Basis(Vector3.UP, torso_twist), Vector3.ZERO) * gx
+	return outer * gx
+
+
+## gx-space point of a chest-frame point (skeleton axes on the chest bone), pre-mirrored on
+## the left shoulder (gun_transform mirrors the whole pose afterwards).
+func _anchor(outer_inv: Transform3D, local: Vector3) -> Vector3:
+	var q := outer_inv * (_chest_frame * local)
+	return q.lerp(Vector3(-q.x, q.y, q.z), shoulder_k)
+
+
+# ---------------------------------------------------------------- torso profile (anti-clip)
+
+## Front of the torso per body, in the chest frame (spine_03 rest origin, skeleton axes: +Z
+## forward, -X right) on a TORSO_CELL grid, and the right shoulder pocket for the butt plate.
+const TORSO_CELL := 0.02
+const TORSO_BONES := ["Hips", "Spine", "Spine1", "Spine2", "Neck", "LeftShoulder", "RightShoulder"]
+## Gap kept between the rifle and the chest surface (jacket folds, breathing).
+const CLIP_MARGIN := 0.015
+static var _torso_cache := {}
+var _torso := {"grid": {}, "pocket": Vector3(-0.13, 0.06, 0.16)}
+var _chest_frame := Transform3D()
+var _chest_rest_inv := Basis()
+## Butt plate centre height in the gun frame, per weapon.
+var _butt_y := -0.08
+var _clip_pts: Array[Vector3] = []
+
+
+## Measured once per body from its skinned mesh at rest: torso vertices (dominant bone in
+## TORSO_BONES) binned by (x, y) keeping the most forward z.
+static func _torso_profile(p_skin: int, body: Node3D, sk: Skeleton3D) -> Dictionary:
+	if _torso_cache.has(p_skin):
+		return _torso_cache[p_skin]
+	var ch := sk.get_bone_global_rest(sk.find_bone(bone_name("spine_03"))).origin
+	var keep := {}
+	for n in TORSO_BONES:
+		var b := sk.find_bone("mixamorig_" + n)
+		if b >= 0:
+			keep[b] = true
+	var arm := sk.get_bone_global_rest(sk.find_bone(bone_name("upperarm_r"))).origin - ch
+	var pocket := Vector3(arm.x * 0.7, arm.y - 0.03, 0.0)
+	var grid := {}
+	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+		if mi.skin == null or mi.mesh == null:
+			continue
+		var slot := {}
+		for i in mi.skin.get_bind_count():
+			var bn := String(mi.skin.get_bind_name(i))
+			slot[i] = sk.find_bone(bn) if bn != "" else mi.skin.get_bind_bone(i)
+		for s in mi.mesh.get_surface_count():
+			var arr := mi.mesh.surface_get_arrays(s)
+			var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var bones: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+			var weights: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+			if bones.is_empty() or verts.is_empty():
+				continue
+			var per := bones.size() / verts.size()
+			for v in verts.size():
+				var best := -1.0
+				var bb := -1
+				for j in per:
+					if weights[v * per + j] > best:
+						best = weights[v * per + j]
+						bb = slot.get(bones[v * per + j], -1)
+				if not keep.has(bb):
+					continue
+				var p := verts[v] - ch
+				var key := Vector2i(floori(p.x / TORSO_CELL), floori(p.y / TORSO_CELL))
+				grid[key] = maxf(grid.get(key, -INF), p.z)
+	# Pocket depth: median of the cell fronts around it, so straps, grenades or pouches sewn on
+	# the chest don't push the butt off the shoulder.
+	var fronts := []
+	for key: Vector2i in grid:
+		if absf((key.x + 0.5) * TORSO_CELL - pocket.x) < 0.04 and absf((key.y + 0.5) * TORSO_CELL - pocket.y) < 0.04:
+			fronts.append(grid[key])
+	fronts.sort()
+	pocket.z = (fronts[fronts.size() / 2] if not fronts.is_empty() else 0.14) + 0.01
+	var res := {"grid": grid, "pocket": pocket}
+	_torso_cache[p_skin] = res
+	return res
+
+
+## Torso front (chest-frame z) around (x, y), or -INF where there is no torso.
+func _torso_front(x: float, y: float) -> float:
+	var g: Dictionary = _torso.grid
+	var cx := floori(x / TORSO_CELL)
+	var cy := floori(y / TORSO_CELL)
+	var z := -INF
+	for dx in 3:
+		for dy in 3:
+			z = maxf(z, g.get(Vector2i(cx + dx - 1, cy + dy - 1), -INF))
+	return z
+
+
+## Skeleton-space shift that takes the rifle (pose `gun_s`) out of the chest: the deepest of a
+## few points along the stock and the fore-end, pushed back to the measured surface.
+func clip_push(gun_s: Transform3D) -> Vector3:
+	var w := arm_w * (1.0 - _sling)
+	if w < 0.01:
+		return Vector3.ZERO
+	var inv := _chest_frame.affine_inverse()
+	var pen := 0.0
+	for pt in _clip_pts:
+		var l := inv * (gun_s * pt)
+		var f := _torso_front(l.x, l.y)
+		if f > -INF:
+			pen = maxf(pen, f + CLIP_MARGIN - l.z)
+	return _chest_frame.basis.z * pen * w
 
 
 ## Finger direction of each hand in the gun frame (-Z forward, +X right, +Y up): the right

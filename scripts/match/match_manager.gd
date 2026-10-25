@@ -446,7 +446,8 @@ func server_handle_monster_hit(shooter: Player, shot_id: int, monster_id: int, h
 	var dist := (shot.origin as Vector3).distance_to(m.global_position)
 	if dist > Projectile.SPEED * (age + 0.35) + 4.0 or dist > Player.FIRE_RANGE + 5.0:
 		return
-	var dmg := Player.DAMAGE * MonsterManager.PLAYER_DAMAGE_MULT * (Player.HEADSHOT_MULT if headshot else 1.0)
+	# Workbench upgrades (barrel, hollow points) count here.
+	var dmg := Player.DAMAGE * MonsterManager.PLAYER_DAMAGE_MULT * (Shop.headshot_mult(shooter.upgrades) if headshot else 1.0) * Shop.damage_mult(shooter.upgrades)
 	var was_alive := m.alive
 	var key := String(shooter.name)
 	if stats.has(key):

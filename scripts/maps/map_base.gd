@@ -25,6 +25,12 @@ var sun: DirectionalLight3D
 var props_root: Node3D
 var rng := RandomNumberGenerator.new()
 
+## Zombie survival (set before build): the building nearest the centre becomes the survivors'
+## base, with the workbench ({pos, facing}) and everyone's start points inside.
+var zombie := false
+var zombie_bench := {}
+var zombie_spawns: Array[Vector3] = []
+
 var _n_ground := FastNoiseLite.new()
 var _n_hills := FastNoiseLite.new()
 var _box_meshes := {}
@@ -45,6 +51,8 @@ func build(q: int) -> void:
 	add_child(props_root)
 	_build_environment()
 	plan_layout()
+	if zombie:
+		_pick_zombie_base()
 	_build_terrain()
 	build_planned_buildings()
 	build_layout()
@@ -220,8 +228,27 @@ func _tag_surface(node: Node, surface: String) -> void:
 	for c in node.find_children("*", "StaticBody3D", true, false):
 		c.set_meta("surface", surface)
 
+func _pick_zombie_base() -> void:
+	var best := -1
+	for i in _planned.size():
+		if best < 0 or (_planned[i].c as Vector2).length() < (_planned[best].c as Vector2).length():
+			best = i
+	if best < 0 or (_planned[best].c as Vector2).length() > 25.0:
+		plan_building(Vector2.ZERO, Vector2(12, 9), 1, 0.0, 777, null, true)
+		best = _planned.size() - 1
+	_planned[best].base = true
+
+
 ## Teams line up along their edge, in rows of up to 5 (10v10 gets two rows).
+## Zombie survivors all start inside their base.
 func get_spawn(team: int, slot: int, count: int) -> Dictionary:
+	if zombie and team == 0 and not zombie_spawns.is_empty():
+		var p := zombie_spawns[slot % zombie_spawns.size()]
+		var yaw := 0.0
+		if not zombie_bench.is_empty():
+			var to: Vector3 = zombie_bench.pos - p
+			yaw = atan2(-to.x, -to.z)
+		return {"pos": Vector3(p.x, height_at(p.x, p.z) + 0.15, p.z), "yaw": yaw}
 	var per_row := mini(count, 5)
 	var row := slot / per_row
 	var in_row := mini(per_row, count - row * per_row)
@@ -765,11 +792,13 @@ func _ground_avg(c: Vector2, h: Vector2) -> float:
 
 
 ## Registers a building to build later and flattens the ground under it.
-## `size` is rounded to whole modules, `yaw` to a quarter turn.
-func plan_building(center: Vector2, size: Vector2, floors: int, yaw: float, seed: int, mat: Material = null) -> void:
+## `size` is rounded to whole modules, `yaw` to a quarter turn. Layouts are authored small:
+## every building gets one extra module each way (room for the furniture) unless `exact`.
+func plan_building(center: Vector2, size: Vector2, floors: int, yaw: float, seed: int, mat: Material = null, exact := false) -> void:
 	var quarter := roundi(yaw / (PI * 0.5))
-	var nx := maxi(2, roundi(size.x / MODULE_W))
-	var nz := maxi(2, roundi(size.y / MODULE_W))
+	var grow := 0 if exact else 1
+	var nx := maxi(2, roundi(size.x / MODULE_W) + grow)
+	var nz := maxi(2, roundi(size.y / MODULE_W) + grow)
 	floors = mini(floors, 2)
 	if floors > 1:
 		nx = maxi(nx, 3) # the staircase needs 8 m of wall
@@ -879,6 +908,7 @@ func _build_building(b: Dictionary) -> void:
 	if r.randf() < 0.45:
 		doors[5 - side] = clampi(nz - 1 - int(doors[side]), 0, nz - 1)
 	var door_points: Array[Vector3] = []
+	_wall_slots.clear()
 
 	for f in floors:
 		var y0 := 0.06 + f * FLOOR_H
@@ -922,9 +952,152 @@ func _build_building(b: Dictionary) -> void:
 		scatter_clutter(cp, 1.2, 1)
 		placed_clutter += 1
 	# A crate stack inside a one-storey building (not on the way from door to door).
+	var stack_at := Vector3.INF
 	if floors == 1 and r.randf() < 0.7:
-		var inside := root.transform * Vector3(([-1.0, 1.0][r.randi() % 2]) * (w * 0.5 - 1.3), 0.0, ([-1.0, 1.0][r.randi() % 2]) * (d * 0.5 - 1.1))
+		stack_at = Vector3(([-1.0, 1.0][r.randi() % 2]) * (w * 0.5 - 1.3), 0.0, ([-1.0, 1.0][r.randi() % 2]) * (d * 0.5 - 1.1))
+		var inside := root.transform * stack_at
 		add_crate_stack(Vector2(inside.x, inside.z), root.rotation.y + r.randf_range(-0.2, 0.2), true)
+	var keep: Array[Vector3] = []
+	if stack_at != Vector3.INF:
+		keep.append(stack_at)
+	if b.get("base", false):
+		_fit_out_base(root, w, d, floors, keep)
+	_furnish(root, w, d, floors, r, keep)
+
+
+# ---------------------------------------------------------------- furniture
+#
+# Meshy AI furniture, set against the inside of the ground-floor walls: tall pieces only on
+# solid wall, low ones under windows too; never in a doorway, on the stairs or on a reserved
+# spot. Box colliders, so they are cover.
+
+## id -> [scene, scale, tall]
+const FURNITURE := {
+	"fridge": ["res://assets/furniture/fridge.glb", 1.75, true],
+	"cabinet": ["res://assets/furniture/cabinet.glb", 1.9, true],
+	"lockers": ["res://assets/furniture/lockers.glb", 1.0, true],
+	"bed": ["res://assets/furniture/bed.glb", 1.05, false],
+	"couch": ["res://assets/furniture/couch.glb", 1.05, false],
+}
+const WORKBENCH_SCENE := "res://assets/furniture/workbench.glb"
+var _wall_slots: Array = []
+
+
+func _furnish(root: Node3D, w: float, d: float, floors: int, r: RandomNumberGenerator, keep: Array[Vector3]) -> void:
+	var doors: Array[Vector3] = []
+	for s in _wall_slots:
+		if s.kind == "door":
+			doors.append(s.pos)
+	var free: Array = []
+	for s in _wall_slots:
+		var p: Vector3 = s.pos
+		if s.kind == "door" or String(s.kind).begins_with("broken"):
+			continue
+		if floors > 1 and p.z > d * 0.5 - 1.0:
+			continue # the staircase runs along the back wall
+		var ok := true
+		for q in doors:
+			if q.distance_to(p) < 2.0:
+				ok = false
+		for q in keep:
+			if Vector2(q.x - p.x, q.z - p.z).length() < 2.6:
+				ok = false
+		if ok:
+			free.append(s)
+	var ids := FURNITURE.keys()
+	var goal := clampi(free.size() / 2, 2, 5)
+	var placed := 0
+	var tries := 0
+	while placed < goal and not free.is_empty() and tries < 30:
+		tries += 1
+		var si := r.randi_range(0, free.size() - 1)
+		var s: Dictionary = free[si]
+		var id: String = ids[r.randi_range(0, ids.size() - 1)]
+		var def: Array = FURNITURE[id]
+		if bool(def[2]) and s.kind != "solid":
+			continue
+		free.remove_at(si)
+		# Neighbouring slots on the same wall stay empty (a bed or a couch is wider than half a module).
+		for j in range(free.size() - 1, -1, -1):
+			if (free[j].pos as Vector3).distance_to(s.pos) < MODULE_W * 1.1:
+				free.remove_at(j)
+		add_furniture(root, id, s.pos, s.out)
+		placed += 1
+
+
+## Zombie survival base: the workbench against a solid ground-floor wall, and the survivors'
+## start points on a grid in the middle of the room.
+func _fit_out_base(root: Node3D, w: float, d: float, floors: int, keep: Array[Vector3]) -> void:
+	var doors: Array[Vector3] = []
+	for s in _wall_slots:
+		if s.kind == "door":
+			doors.append(s.pos)
+	var best: Dictionary = {}
+	var best_score := -INF
+	for s in _wall_slots:
+		var p: Vector3 = s.pos
+		if s.kind != "solid" or (floors > 1 and p.z > d * 0.5 - 1.0):
+			continue
+		var near := INF
+		for q in doors:
+			near = minf(near, q.distance_to(p))
+		for q in keep:
+			near = minf(near, Vector2(q.x - p.x, q.z - p.z).length())
+		# Well clear of the doorways, on a long wall rather than in a corner.
+		var score := minf(near, 6.0) - absf((s.out as Vector3).x) * 0.5
+		if score > best_score:
+			best_score = score
+			best = s
+	var bench_local := Vector3.ZERO
+	if not best.is_empty():
+		var n := add_furniture(root, "workbench", best.pos, best.out, WORKBENCH_SCENE, 1.0)
+		if n:
+			bench_local = n.position
+			keep.append(bench_local)
+			var inward: Vector3 = -best.out
+			zombie_bench = {"pos": root.transform * bench_local, "facing": (root.basis * inward).normalized()}
+			# A work lamp over the bench: the gutted rooms are dark and it is the place to find.
+			var lamp := OmniLight3D.new()
+			lamp.light_color = Color(1.0, 0.78, 0.5)
+			lamp.light_energy = 2.2
+			lamp.omni_range = 6.0
+			lamp.shadow_enabled = quality >= 2
+			lamp.position = bench_local + Vector3(0, 2.3, 0) + inward * 0.4
+			root.add_child(lamp)
+	# Start grid: 1.5 m apart, 2.4 m off the walls, clear of the bench and the stairs.
+	zombie_spawns.clear()
+	var z_max := d * 0.5 - (3.2 if floors > 1 else 2.4)
+	var x := -w * 0.5 + 2.4
+	while x <= w * 0.5 - 2.4:
+		var z := -d * 0.5 + 2.4
+		while z <= z_max:
+			var lp := Vector3(x, 0.15, z)
+			if bench_local == Vector3.ZERO or Vector2(lp.x - bench_local.x, lp.z - bench_local.z).length() > 2.4:
+				zombie_spawns.append(root.transform * lp)
+			z += 1.5
+		x += 1.5
+	# Centre first, so a small squad stands together.
+	var c := root.position
+	zombie_spawns.sort_custom(func(a, b): return Vector2(a.x - c.x, a.z - c.z).length() < Vector2(b.x - c.x, b.z - c.z).length())
+
+
+## One piece of furniture with its back to a wall: `wall_pos` on the wall's centre line and
+## `outward` its outer normal (local to `root`).
+func add_furniture(root: Node3D, id: String, wall_pos: Vector3, outward: Vector3, scene := "", scl := 0.0) -> Node3D:
+	if scene == "":
+		scene = FURNITURE[id][0]
+		scl = FURNITURE[id][1]
+	if not Scan.exists(scene):
+		return null
+	var depth := (Scan.size_of(scene) as Vector3).z * scl
+	var inward := -outward
+	var pos := wall_pos + inward * (WALL_T * 0.5 + depth * 0.5 + 0.04)
+	pos.y = 0.06
+	var xf := Transform3D(Basis(Vector3.UP, atan2(inward.x, inward.z)).scaled(Vector3.ONE * scl), pos)
+	var n := Scan.place(root, scene, xf)
+	var gp := root.transform * pos
+	no_grass.append(Rect2(Vector2(gp.x, gp.z) - Vector2(1.0, 1.0), Vector2(2.0, 2.0)))
+	return n
 
 
 ## One wall of `n` modules from `a` to `b` (local coordinates), one floor. Modules
@@ -956,6 +1129,8 @@ func _building_wall(root: Node3D, a: Vector3, b: Vector3, n: int, floor_i: int, 
 				kind = "broken_high"
 			elif kind == "window" and r.randf() < 0.3:
 				kind = "broken"
+		if floor_i == 0:
+			_wall_slots.append({"pos": a + dir * cx, "out": outward, "kind": kind})
 		match kind:
 			"broken":
 				_wall_seg(root, a, dir, basis, cx, wm, 0.0, r.randf_range(0.5, 1.5), mat)
@@ -1262,11 +1437,21 @@ func add_pine(p: Vector2, h: float) -> void:
 	add_cylinder_collider(root, top + Vector3(0, 0.3, 0), 2.3, 2.2)
 
 
+const SNOW_TREE := "res://assets/furniture/snow_tree.glb"
+
+
 func add_fir(p: Vector2, h: float, snowy := true) -> void:
 	if not _pad_free(p, 1.2):
 		return
 	_tree_footprint(p)
 	var root := make_root(p, rng.randf() * TAU, 0.1)
+	# Inside the arena, snowy firs are the scanned snow-laden tree (the backdrop keeps the cheap
+	# cones: hundreds of them).
+	if snowy and absf(p.x) < half.x + 2.0 and absf(p.y) < half.y + 2.0 and Scan.exists(SNOW_TREE):
+		Scan.place(root, SNOW_TREE, Transform3D(Basis.from_scale(Vector3.ONE * h / Scan.size_of(SNOW_TREE).y), Vector3.ZERO), "", "none")
+		add_cylinder_collider(root, Vector3(0, h * 0.25, 0), 0.3, h * 0.5)
+		add_cone_collider(root, h * 0.2, maxf(h * 0.2, 2.3), h * 1.0)
+		return
 	var trunk := CylinderMesh.new()
 	trunk.top_radius = 0.08
 	trunk.bottom_radius = 0.22

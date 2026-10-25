@@ -5,8 +5,8 @@ extends MapBase
 func _init() -> void:
 	map_seed = 23
 	biome = "snow"
-	layout_k = 1.3
-	half = Vector2(73.0, 86.0)
+	layout_k = 1.45
+	half = Vector2(82.0, 96.0)
 	hill_amp = 30.0
 	hill_var = 22.0
 
@@ -71,7 +71,7 @@ func plan_layout() -> void:
 	mirrored(Vector2(-9, 6), 0.0, func(p, y): plan_building(p, Vector2(9, 9), 2, y, 501))
 	mirrored(Vector2(-36, -32), 0.0, func(p, y): plan_building(p, Vector2(9, 6), 1, y, 602))
 	mirrored(Vector2(28, -46), 0.0, func(p, y): plan_building(p, Vector2(6, 6), 1, y, 703))
-	plan_extra_buildings(3)
+	plan_extra_buildings(4)
 
 
 func build_layout() -> void:
@@ -111,7 +111,7 @@ func build_layout() -> void:
 		mirrored(c, 0.0, func(p, _y): scatter_clutter(p, 3.5, 3))
 
 	# Bigger arena: extra cover and crates in the gaps (point-symmetric).
-	fill_cover(16)
+	fill_cover(20)
 
 	_build_backdrop()
 

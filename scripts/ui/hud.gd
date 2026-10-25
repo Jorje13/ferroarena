@@ -61,6 +61,9 @@ var _last_countdown := -1
 var _hints: VBoxContainer
 var _keybinds: KeybindMenu
 var _armory: CustomizePanel
+## Zombie survival: the workbench window and the scrap counter.
+var _shop: ShopPanel
+var _scrap_label: Label
 
 
 func setup(p_arena: Arena) -> void:
@@ -295,6 +298,8 @@ func setup(p_arena: Arena) -> void:
 	_build_hotbar()
 	_build_scoreboard()
 	_build_pause()
+	if Game.is_zombie():
+		_build_shop()
 	_build_mode_ui()
 
 	arena.match_mgr.state_changed.connect(_on_state_changed)
@@ -317,11 +322,12 @@ func _on_wave_changed() -> void:
 	match mo.phase:
 		MonsterManager.Phase.WAVE:
 			_show_announce("VAGUE %d" % mo.wave, "%d ennemis" % mo.total, 3.0)
+			_close_shop()
 		MonsterManager.Phase.BREAK:
 			if mo.wave > 0:
-				_show_announce("VAGUE %d REPOUSSÉE" % mo.wave, "Les tombés se relèvent · fouillez les caisses", 4.0)
+				_show_announce("VAGUE %d REPOUSSÉE" % mo.wave, "+%d ferraille · les tombés se relèvent · l'établi est ouvert" % Shop.WAVE_SCRAP, 4.0)
 			else:
-				_show_announce("RESTEZ ENSEMBLE", "La première vague arrive", 3.0)
+				_show_announce("RESTEZ ENSEMBLE", "Équipez-vous à l'établi : la première vague arrive", 3.5)
 
 
 static func _offsets(c: Control, pos: Vector2, sz: Vector2) -> void:
@@ -366,7 +372,7 @@ func viewed() -> Player:
 
 
 func is_menu_open() -> bool:
-	return _pause.visible or _end_panel.visible or (_keybinds != null and _keybinds.visible) or (_armory != null and _armory.visible) or (_crosshair_panel != null and _crosshair_panel.visible)
+	return _pause.visible or _end_panel.visible or (_shop != null and _shop.visible) or (_keybinds != null and _keybinds.visible) or (_armory != null and _armory.visible) or (_crosshair_panel != null and _crosshair_panel.visible)
 
 
 # ---------------------------------------------------------------- frame update
@@ -414,7 +420,12 @@ func _process_hud(delta: float) -> void:
 			mods.append("◖ SILENCIEUX")
 		if v.has_stock:
 			mods.append("▮ CROSSE")
+		for e in Shop.ENTRIES:
+			if Shop.is_upgrade(e) and e.cat == "weapon" and v.upgrade_level(e.id) > 0 and not e.id in ["silencer", "stock"]:
+				mods.append("%s %d" % [String(e.name).get_slice(" ", 0), v.upgrade_level(e.id)])
 		_attach_label.text = "   ".join(mods)
+		if _scrap_label:
+			_scrap_label.text = "FERRAILLE  %d" % v.scrap
 		_bandage_count.text = "×%d" % v.bandages
 		_bandage_count.add_theme_color_override("font_color", UIStyle.TEXT if v.bandages > 0 else UIStyle.DANGER)
 		_shield_count.text = "×%d" % v.shield_charges
@@ -436,6 +447,16 @@ func _process_hud(delta: float) -> void:
 	if _kc_panel.visible and not arena.camera_rig.kill_cam_active():
 		_kc_panel.visible = false
 
+	# Debug: --open_shop shows the workbench window (wherever the player stands) once in.
+	if _shop and Game.debug.has("open_shop") and local and not _shop.visible and mm.state == MatchManager.State.LIVE:
+		# --buy=id,id...: walk up to the bench and buy them (host only), then show the window.
+		if Game.debug.has("buy") and multiplayer.is_server() and arena.monsters.phase == MonsterManager.Phase.BREAK:
+			var b: Dictionary = arena.map.zombie_bench
+			local.global_position = b.pos + b.facing * 1.6
+			for id in str(Game.debug.buy).split(","):
+				local.buy(id)
+				print("[SHOP] %s -> ferraille %d %s" % [id, local.scrap, str(local.upgrades)])
+		_shop.open(local)
 	_compass.queue_redraw()
 	_crosshair.visible = not _blind.visible and not (Game.is_ph() and local != null and local.team == 1)
 	_crosshair.queue_redraw()
@@ -535,6 +556,13 @@ func _update_prompt(v: Player) -> void:
 		return
 	if v.shield <= 0.0 and v.shield_charges > 0:
 		_prompt.text = "[%s] RECHARGER LE BOUCLIER" % Game.key_label("shield")
+	# Zombie workbench
+	if _shop and v == local and arena.near_bench(v) and _prompt.text == "" and arena.chest_for(v) == null:
+		if arena.can_shop(v):
+			_prompt.text = "[%s] ÉTABLI — ACHATS ET AMÉLIORATIONS  (%d ferraille)" % [Game.key_label("interact"), v.scrap]
+		else:
+			_prompt.text = "[%s] ÉTABLI — FERMÉ PENDANT LES VAGUES" % Game.key_label("interact")
+		return
 	# Supply crate
 	var chest := arena.chest_for(v)
 	if chest and _prompt.text == "":
@@ -1029,6 +1057,9 @@ func _toggle_pause() -> void:
 		_crosshair_panel.hide()
 		_pause.show()
 		return
+	if _shop and _shop.visible:
+		_close_shop()
+		return
 	if _keybinds.visible:
 		if not _keybinds.is_listening():
 			_keybinds.hide()
@@ -1041,6 +1072,16 @@ func _toggle_pause() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _shop and event.is_action_pressed("interact") and not event.is_echo():
+		if _shop.visible:
+			_close_shop()
+			get_viewport().set_input_as_handled()
+			return
+		if local and arena.near_bench(local) and not is_menu_open() and arena.chest_for(local) == null and local.get_revive_candidate(Player.REVIVE_RANGE) == null:
+			_shop.open(local)
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			get_viewport().set_input_as_handled()
+			return
 	if event.is_action_pressed("pause"):
 		_toggle_pause()
 		get_viewport().set_input_as_handled()
@@ -1054,6 +1095,25 @@ func _input(event: InputEvent) -> void:
 var _slots: Array = []
 var _toast: Label
 var _toast_t := 0.0
+
+
+func _build_shop() -> void:
+	_shop = ShopPanel.new()
+	_shop.hide()
+	_shop.closed.connect(_close_shop)
+	_root.add_child(_shop)
+	_scrap_label = UIStyle.label("", 18, UIStyle.ACCENT, 700)
+	_scrap_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_scrap_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_offsets(_scrap_label, Vector2(-150, -128), Vector2(300, 26))
+	_root.add_child(_scrap_label)
+
+
+func _close_shop() -> void:
+	if _shop and _shop.visible:
+		_shop.hide()
+		if not is_menu_open():
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _build_hotbar() -> void:

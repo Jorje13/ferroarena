@@ -28,6 +28,8 @@ func _target(st: String, t: float, d: Dictionary) -> Dictionary:
 	# dy: hips drop; head: head pitch; twist: spine yaw; rate: how fast values follow.
 	var g := {"lean": 0.0, "sh_l": 0.0, "sh_r": 0.0, "sp_l": 0.0, "sp_r": 0.0, "el_l": 0.0, "el_r": 0.0,
 		"dy": 0.0, "head": 0.0, "twist": 0.0, "walk": 0.0, "rate": 10.0}
+	if rig.kind == 2:
+		return _walker_target(st, t, g)
 	var big: bool = rig.kind == 0
 	match st:
 		"idle":
@@ -127,6 +129,75 @@ func _target(st: String, t: float, d: Dictionary) -> Dictionary:
 	return g
 
 
+## Rôdeur: arms reaching out in front (reach 1) or hanging (0), sh_* raise (-) / lower (+)
+## them from there; a limp, a lolling head.
+func _walker_target(st: String, t: float, g: Dictionary) -> Dictionary:
+	g.reach = 0.85
+	var tm := Time.get_ticks_msec() * 0.001
+	match st:
+		"idle":
+			var br := sin(tm * 1.3 + _seed)
+			g.lean = 0.18 + 0.04 * br
+			g.reach = 0.35
+			g.sh_l = 0.08 * br
+			g.sh_r = -0.08 * br
+			g.head = 0.15 + 0.08 * sin(tm * 0.7 + _seed * 2.0)
+			g.rate = 4.0
+		"walk", "run":
+			g.walk = 1.0
+			g.lean = 0.24
+			g.head = 0.05
+			g.sh_l = 0.08 * sin(tm * 2.1 + _seed)
+			g.sh_r = 0.08 * sin(tm * 1.7 + _seed * 3.0)
+			g.rate = 5.0
+		"windup":
+			# Lunges for a grab: arms flung up and wide, head thrown back.
+			g.reach = 1.0
+			g.lean = -0.15
+			g.sh_l = -0.5
+			g.sh_r = -0.5
+			g.sp_l = 0.25
+			g.sp_r = 0.25
+			g.head = -0.35
+			g.rate = 7.0
+		"strike":
+			# Grabs and bites: falls forward onto the prey, arms clamping shut.
+			g.reach = 1.0
+			g.lean = 0.6
+			g.dy = 0.06
+			g.sh_l = 0.25
+			g.sh_r = 0.25
+			g.sp_l = -0.2
+			g.sp_r = -0.2
+			g.el_l = 0.5
+			g.el_r = 0.5
+			g.head = 0.35
+			g.rate = 26.0
+		"recover":
+			g.lean = 0.3
+			g.rate = 5.0
+		"stagger":
+			g.lean = -0.5
+			g.head = -0.45
+			g.reach = 0.3
+			g.rate = 20.0
+		"spawn":
+			var k := clampf(t / 1.4, 0.0, 1.0)
+			g.dy = lerpf(0.6, 0.0, k)
+			g.lean = lerpf(0.9, 0.2, k)
+			g.reach = 1.0
+			g.sh_l = lerpf(-0.6, 0.0, k)
+			g.sh_r = g.sh_l
+			g.rate = 6.0
+		"dead":
+			g.lean = -0.8
+			g.dy = 0.55
+			g.reach = 0.2
+			g.head = -0.5
+			g.rate = 7.0
+	return g
+
+
 func _pose(sk: Skeleton3D, delta: float) -> void:
 	var d := rig.data
 	var tg := _target(rig.state, rig.state_t, d)
@@ -163,6 +234,16 @@ func _pose(sk: Skeleton3D, delta: float) -> void:
 
 	# ---- Arms: stride counter-swing + state angles (+X is the monster's left).
 	var asw := float(d.arm_swing) * walk
+	if rig.kind == 2:
+		_walker_arm(sk, d.arm_l, float(_v.reach), float(_v.sh_l) + osc * asw, float(_v.sp_l), float(_v.el_l), 1.0)
+		_walker_arm(sk, d.arm_r, float(_v.reach), float(_v.sh_r) - osc * asw, float(_v.sp_r), float(_v.el_r), -1.0)
+		# Head lolls to one side (per monster); a limp: the right leg drags, the hips dip on it.
+		_rot(sk, int(d.head), Vector3.BACK, (0.22 if _seed > 5.0 else -0.22) + 0.06 * osc * walk)
+		var sw2 := float(d.leg_swing) * walk
+		_rot(sk, hips, Vector3.BACK, 0.07 * maxf(0.0, -osc) * walk)
+		_leg(sk, d.leg_l, osc * sw2, maxf(0.0, cos(ph)) * 0.14 * walk, float(_v.dy))
+		_leg(sk, d.leg_r, -osc * sw2 * 0.7, maxf(0.0, -cos(ph)) * 0.035 * walk, float(_v.dy))
+		return
 	_arm(sk, d.arm_l, -(float(_v.sh_l) + osc * asw), float(_v.sp_l), float(_v.el_l) - maxf(0.0, -osc) * asw * 0.8, 1.0)
 	_arm(sk, d.arm_r, -(float(_v.sh_r) - osc * asw), float(_v.sp_r), float(_v.el_r) - maxf(0.0, osc) * asw * 0.8, -1.0)
 
@@ -170,6 +251,17 @@ func _pose(sk: Skeleton3D, delta: float) -> void:
 	var sw := float(d.leg_swing) * walk
 	_leg(sk, d.leg_l, osc * sw, maxf(0.0, cos(ph)) * 0.16 * walk, float(_v.dy))
 	_leg(sk, d.leg_r, -osc * sw, maxf(0.0, -cos(ph)) * 0.16 * walk, float(_v.dy))
+
+
+## T-pose arm (the Rôdeur): swung from sideways to straight ahead about the vertical (slightly
+## inwards), then lowered from there: reach 1 = held out in front, 0 = hanging; `lower` adds to
+## that (negative raises), `spread` opens it outwards, `elbow` bends the forearm down.
+func _walker_arm(sk: Skeleton3D, chain: Array, reach: float, lower: float, spread: float, elbow: float, side: float) -> void:
+	_rot(sk, int(chain[0]), Vector3.UP, -side * (1.62 - spread))
+	_rot(sk, int(chain[0]), Vector3.RIGHT, lerpf(1.3, 0.12, reach) + lower)
+	_rot(sk, int(chain[1]), Vector3.RIGHT, 0.12 + elbow)
+	# Limp wrists.
+	_rot(sk, int(chain[2]), Vector3.RIGHT, 0.45)
 
 
 ## Rotates `bone` (and so everything below it) about a skeleton-space axis through its joint.

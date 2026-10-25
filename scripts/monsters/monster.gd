@@ -8,10 +8,12 @@ extends CharacterBody3D
 ## rakes the ground in a long line (telegraphed by raised claws) that tears whoever stands in it.
 ## Bondisseur (kind 1): fast and hunched; crouches, then pounces from 5-13 m onto where its
 ## prey is heading; claws when close.
+## Rôdeur (kind 2): slow walker that shambles straight at the nearest survivor and grabs / bites
+## at arm's length; dies to one head shot early on.
 
 const STATES := ["idle", "walk", "run", "windup", "strike", "recover", "crouch", "leap", "land", "stagger", "spawn", "dead"]
 const GRAVITY := 24.0
-const WEAPON_NAMES := ["FAUCHEUR", "BONDISSEUR"]
+const WEAPON_NAMES := ["FAUCHEUR", "BONDISSEUR", "RÔDEUR"]
 
 var id := 0
 var kind := 0
@@ -72,7 +74,7 @@ func setup(p_id: int, p_kind: int, p_manager: MonsterManager) -> void:
 		var cs := CollisionShape3D.new()
 		var cap := CapsuleShape3D.new()
 		cap.radius = float(data.radius)
-		cap.height = 1.8 if kind == 0 else 1.3
+		cap.height = [1.8, 1.3, 1.7][kind]
 		cs.shape = cap
 		cs.position.y = cap.height * 0.5
 		add_child(cs)
@@ -152,9 +154,9 @@ func _on_state(s: String, _prev: String) -> void:
 	var pos := global_position + Vector3(0, 1.2, 0)
 	match s:
 		"windup":
-			Audio.play_3d("mon_growl", pos, 3.0, 60.0, 0.08, 1.3 if kind == 1 else 0.85)
+			Audio.play_3d("mon_growl", pos, 3.0, 60.0, 0.08, [0.85, 1.3, 0.7][kind])
 		"strike":
-			Audio.play_3d("mon_swipe", pos, 2.0, 40.0, 0.1, 0.8 if kind == 0 else 1.1)
+			Audio.play_3d("mon_swipe", pos, 2.0, 40.0, 0.1, [0.8, 1.1, 0.9][kind])
 		"crouch":
 			Audio.play_3d("mon_growl", pos, 2.0, 55.0, 0.05, 1.6)
 		"leap":
@@ -163,7 +165,7 @@ func _on_state(s: String, _prev: String) -> void:
 			Audio.play_3d("mon_slam", global_position, 2.0, 55.0, 0.08)
 		"dead":
 			collision_layer = 0
-			Audio.play_3d("mon_death", pos, 4.0, 65.0, 0.06, 0.8 if kind == 0 else 1.1)
+			Audio.play_3d("mon_death", pos, 4.0, 65.0, 0.06, [0.8, 1.1, 0.7][kind])
 		"spawn":
 			Audio.play_3d("mon_growl", pos, 1.0, 55.0, 0.05, 0.7)
 
@@ -216,7 +218,13 @@ func _ai(delta: float) -> void:
 			# The rake is aimed once (the red strip shows where): sidestep it.
 			if _attack != "rake":
 				_face_target(delta, 10.0)
-			_stand(delta)
+			if kind == 2 and target:
+				# Keeps shuffling in while it lunges, so stepping back a little is not enough.
+				_steer(target.global_position, 0.9, delta)
+				_gravity(delta)
+				move_and_slide()
+			else:
+				_stand(delta)
 			if _t_state >= _windup_time():
 				_do_strike()
 		"strike":
@@ -225,7 +233,7 @@ func _ai(delta: float) -> void:
 				set_state("recover")
 		"recover":
 			_stand(delta)
-			if _t_state >= (0.55 if kind == 0 else 0.25):
+			if _t_state >= [0.55, 0.25, 0.7][kind]:
 				set_state("idle")
 		"crouch":
 			_face_target(delta, 14.0)
@@ -291,7 +299,7 @@ func _gravity(delta: float) -> void:
 func _windup_time() -> float:
 	if kind == 0:
 		return 0.9 if _attack == "rake" else 0.55
-	return 0.28
+	return 0.28 if kind == 1 else 0.5
 
 
 func _hunt(delta: float) -> void:
@@ -318,6 +326,12 @@ func _hunt(delta: float) -> void:
 			manager.server_fx(id, "rake_tele", global_position, _forward())
 			set_state("windup")
 			return
+	elif kind == 2:
+		# The Rôdeur has one trick: reach the prey and grab it.
+		if dist <= 1.7 and _atk_cd <= 0.0:
+			_attack = "melee"
+			set_state("windup")
+			return
 	else:
 		if dist <= 1.9 and _atk_cd <= 0.0:
 			_attack = "melee"
@@ -334,7 +348,7 @@ func _hunt(delta: float) -> void:
 		speed = float(data.speed) * (1.45 if dist > 14.0 else 1.0)
 	var want_state := "run" if speed > 3.4 else "walk"
 	set_state(want_state)
-	var stop_at := 2.2 if kind == 0 else 1.3
+	var stop_at: float = [2.2, 1.3, 1.0][kind]
 	if dist > stop_at:
 		_steer(target.global_position, speed, delta)
 	else:
@@ -405,7 +419,7 @@ func _forward() -> Vector3:
 
 func _do_strike() -> void:
 	set_state("strike")
-	_atk_cd = 1.2 if kind == 0 else 0.7
+	_atk_cd = [1.2, 0.7, 1.3][kind]
 	var fwd := _forward()
 	if _attack == "rake":
 		_special_cd = 6.5
@@ -420,17 +434,18 @@ func _do_strike() -> void:
 			if along > 1.0 and along < 11.0 and lateral < 1.0 and _los_to(p):
 				_hurt(p, 32.0)
 		return
-	var reach := 3.8 if kind == 0 else 2.2
+	var reach: float = [3.8, 2.2, 1.9][kind]
 	for p: Player in manager.arena.players:
 		if not (p.alive or p.downed):
 			continue
 		var rel := p.global_position - global_position
 		rel.y = 0.0
 		if rel.length() < reach and (rel.length() < 0.8 or rel.normalized().dot(fwd) > 0.15):
-			_hurt(p, 42.0 if kind == 0 else 20.0)
+			_hurt(p, [42.0, 20.0, 26.0][kind])
 
 
 func _hurt(p: Player, amount: float) -> void:
+	amount *= Shop.armor_mult(p.upgrades)
 	p.server_apply_damage(amount, null, false, WEAPON_NAMES[kind], global_position + Vector3(0, 1.2, 0), Vector3.INF)
 
 

@@ -11,10 +11,13 @@ var _name: LineEdit
 var _mode: OptionButton
 var _mapsel: OptionButton
 var _rounds: SpinBox
-var _modesel: OptionButton
+## Menu pages ("home", "play", "opts") and the game-mode buttons of the play page.
+var _pages := {}
+var _mode_btns: Array[Button] = []
 var _diffsel: OptionButton
 var _brsel: OptionButton
 var _mode_note: Label
+var _game_empty: Label
 var _row_diff: Control
 var _row_format: Control
 var _row_br: Control
@@ -52,6 +55,9 @@ func _ready() -> void:
 		_status.text = Game.pending_message
 		Game.pending_message = ""
 	_refresh_lobby()
+	# Debug: --menu_page=play|opts opens that page (with --menu_shot for captures).
+	if Game.debug.has("menu_page"):
+		_show_page(str(Game.debug.menu_page))
 	# Debug: --custom_shots=path.png [--variants=N] captures the armoury with random outfits.
 	# Debug: --menu_shot=path.png saves the main menu after a moment (--mode / --difficulty apply).
 	if Game.debug.has("menu_shot"):
@@ -175,10 +181,14 @@ func _debug_custom_shots() -> void:
 	var n := int(Game.debug.get("variants", 4))
 	var path := str(Game.debug.custom_shots)
 	for i in n:
-		var l := ArmorKit.random_loadout(1000 + i * 77) if i > 0 else Game.loadout
+		var l: Dictionary = ArmorKit.random_loadout(1000 + i * 77) if i > 0 else Game.loadout.duplicate()
 		if Game.debug.has("all_pieces"):
 			l = {"body": i % 2, "helmet": i % 5, "chest": i % 4, "pack": i % 4, "legs": i % 3,
 				"suit": (i * 3) % 10, "fabric": i % 6, "armor": (i * 7) % 10, "pattern": i % 5, "skin": i % 6, "weapon": i % 3}
+		# Debug: --prev_skin=N / --prev_weapon=N force the body / rifle of every capture.
+		for k in ["skin", "weapon"]:
+			if Game.debug.has("prev_" + k):
+				l[k] = int(Game.debug["prev_" + k])
 		Game.loadout = ArmorKit.sanitize(l)
 		_custom.open(Game.loadout)
 		_spawn_preview()
@@ -230,6 +240,20 @@ func _build_ui() -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD
 	v.add_child(_status)
 
+	# Pages: home (JOUER / PARAMÈTRES / QUITTER), play (mode, then its settings, then launch) and
+	# settings (AUDIO / VIDÉO / CONTRÔLES). One shown at a time, "RETOUR" goes home.
+	var pg_home := VBoxContainer.new()
+	var pg_play := VBoxContainer.new()
+	var pg_opts := VBoxContainer.new()
+	for k in [["home", pg_home], ["play", pg_play], ["opts", pg_opts]]:
+		var pg: VBoxContainer = k[1]
+		pg.add_theme_constant_override("separation", 10)
+		_pages[k[0]] = pg
+		v.add_child(pg)
+	_show_page("home")
+
+	# ---- Home
+	v = pg_home
 	v.add_child(_section("PROFIL"))
 	_name = LineEdit.new()
 	_name.text = Game.player_name
@@ -238,19 +262,60 @@ func _build_ui() -> void:
 	_name.text_changed.connect(func(t): Game.player_name = t if t.strip_edges() != "" else "Raider")
 	v.add_child(_row("Nom", _name))
 	v.add_child(_button("PERSONNALISER LE RAIDER (ARMURERIE)", _open_custom))
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 14)
+	v.add_child(gap)
+	for b in [["JOUER", "play"], ["PARAMÈTRES", "opts"]]:
+		var big := _button(b[0], func(): _show_page(b[1]))
+		big.add_theme_font_size_override("font_size", 26)
+		big.custom_minimum_size = Vector2(0, 58)
+		v.add_child(big)
+	var quit := _button("QUITTER", func():
+		_save()
+		get_tree().quit())
+	quit.custom_minimum_size = Vector2(0, 44)
+	v.add_child(quit)
 
-	v.add_child(_section("PARTIE"))
-	_modesel = OptionButton.new()
+	# ---- Play: mode, map, the mode's settings, then launch
+	v = pg_play
+	v.add_child(_back_button())
+	v.add_child(_section("MODE DE JEU"))
+	var modes := GridContainer.new()
+	modes.columns = 2
+	modes.add_theme_constant_override("h_separation", 6)
+	modes.add_theme_constant_override("v_separation", 6)
+	var mgroup := ButtonGroup.new()
 	for i in Game.MODE_NAMES.size():
-		_modesel.add_item(Game.MODE_NAMES[i])
-	_modesel.select(Game.mode())
-	_modesel.item_selected.connect(func(i):
-		Game.set_config("mode", i)
-		_apply_mode_rows())
-	v.add_child(_row("Mode de jeu", _modesel))
+		var mb := Button.new()
+		mb.text = String(Game.MODE_NAMES[i]).to_upper()
+		mb.toggle_mode = true
+		mb.button_group = mgroup
+		mb.button_pressed = i == Game.mode()
+		mb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mb.custom_minimum_size = Vector2(0, 46)
+		mb.pressed.connect(func():
+			Audio.play_2d("ui", -8.0)
+			Game.set_config("mode", i)
+			_apply_mode_rows())
+		modes.add_child(mb)
+		_mode_btns.append(mb)
+	v.add_child(modes)
 	_mode_note = UIStyle.label("", 13, UIStyle.DIM)
 	_mode_note.autowrap_mode = TextServer.AUTOWRAP_WORD
 	v.add_child(_mode_note)
+	_mapsel = OptionButton.new()
+	for m in Game.MAPS:
+		_mapsel.add_item(m.name)
+	for i in Game.MAPS.size():
+		if Game.MAPS[i].id == Game.config.map:
+			_mapsel.select(i)
+	_mapsel.item_selected.connect(func(i):
+		Game.set_config("map", Game.MAPS[i].id)
+		_build_background())
+	v.add_child(_row("Carte", _mapsel))
+	v.add_child(_section("RÉGLAGES DE LA PARTIE"))
+	_game_empty = UIStyle.label("Aucun réglage pour ce mode.", 14, UIStyle.DIM)
+	v.add_child(_game_empty)
 	_diffsel = OptionButton.new()
 	for n in Game.DIFFICULTY_NAMES:
 		_diffsel.add_item(n)
@@ -272,16 +337,6 @@ func _build_ui() -> void:
 	_brsel.item_selected.connect(func(i): Game.set_config("br_bots", i))
 	_row_br = _row("Bots dans la partie", _brsel)
 	v.add_child(_row_br)
-	_mapsel = OptionButton.new()
-	for m in Game.MAPS:
-		_mapsel.add_item(m.name)
-	for i in Game.MAPS.size():
-		if Game.MAPS[i].id == Game.config.map:
-			_mapsel.select(i)
-	_mapsel.item_selected.connect(func(i):
-		Game.set_config("map", Game.MAPS[i].id)
-		_build_background())
-	v.add_child(_row("Carte", _mapsel))
 	_rounds = SpinBox.new()
 	_rounds.min_value = 1
 	_rounds.max_value = 9
@@ -303,14 +358,17 @@ func _build_ui() -> void:
 		v.add_child(row)
 		_rows_bots.append(row)
 
-	var solo := _button("ENTRAÎNEMENT  —  SOLO CONTRE BOTS", func():
+	v.add_child(_section("LANCER"))
+	var solo := _button("ENTRAÎNEMENT  —  SOLO", func():
 		_save()
 		if Game.is_ph():
 			_status.text = "Le prop hunt se joue à plusieurs, sans bots : hébergez une partie et invitez au moins un ami."
 			return
 		Game.start_solo())
 	solo.add_theme_font_size_override("font_size", 20)
+	solo.custom_minimum_size = Vector2(0, 50)
 	v.add_child(solo)
+	v.add_child(_section("EN LIGNE"))
 	var host := _button("HÉBERGER UNE PARTIE (port %d)" % Game.DEFAULT_PORT, func():
 		_save()
 		var err := Game.host_game()
@@ -329,7 +387,57 @@ func _build_ui() -> void:
 		_status.text = "Connexion à %s…" % _ip.text if err == OK else "Adresse invalide."))
 	v.add_child(join_row)
 
-	v.add_child(_section("OPTIONS"))
+	# ---- Settings: AUDIO / VIDÉO / CONTRÔLES
+	v = pg_opts
+	v.add_child(_back_button())
+	var sub_audio := VBoxContainer.new()
+	var sub_video := VBoxContainer.new()
+	var sub_ctrl := VBoxContainer.new()
+	var subs := [sub_audio, sub_video, sub_ctrl]
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 6)
+	var group := ButtonGroup.new()
+	for i in 3:
+		var tb := Button.new()
+		tb.text = ["AUDIO", "VIDÉO", "CONTRÔLES"][i]
+		tb.toggle_mode = true
+		tb.button_group = group
+		tb.button_pressed = i == 0
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.pressed.connect(func():
+			Audio.play_2d("ui", -8.0)
+			for j in subs.size():
+				(subs[j] as Control).visible = j == i)
+		tabs.add_child(tb)
+	v.add_child(tabs)
+	for sb: VBoxContainer in subs:
+		sb.add_theme_constant_override("separation", 10)
+		sb.visible = sb == sub_audio
+		v.add_child(sb)
+
+	v = sub_audio
+	v.add_child(_section("SON"))
+	var mus := HSlider.new()
+	mus.max_value = 1.0
+	mus.step = 0.05
+	mus.value = Game.music_volume
+	mus.custom_minimum_size = Vector2(200, 24)
+	mus.value_changed.connect(func(x):
+		Game.music_volume = x
+		Audio.apply_volumes())
+	v.add_child(_row("Musique", mus))
+	var sfx := HSlider.new()
+	sfx.max_value = 1.0
+	sfx.step = 0.05
+	sfx.value = Game.sfx_volume
+	sfx.custom_minimum_size = Vector2(200, 24)
+	sfx.value_changed.connect(func(x):
+		Game.sfx_volume = x
+		Audio.apply_volumes())
+	v.add_child(_row("Effets sonores", sfx))
+
+	v = sub_video
+	v.add_child(_section("AFFICHAGE"))
 	var quality := OptionButton.new()
 	for q in Game.QUALITY_NAMES:
 		quality.add_item(q)
@@ -358,6 +466,16 @@ func _build_ui() -> void:
 		Game.save_settings()
 		Game.apply_video())
 	v.add_child(_row("Limite d'images/s", cap))
+	var full := CheckBox.new()
+	full.text = "Plein écran"
+	full.button_pressed = Game.fullscreen
+	full.toggled.connect(func(b):
+		Game.fullscreen = b
+		Game.apply_video())
+	v.add_child(full)
+
+	v = sub_ctrl
+	v.add_child(_section("SOURIS ET CAMÉRA"))
 	var sens := HSlider.new()
 	sens.min_value = 0.2
 	sens.max_value = 3.0
@@ -366,24 +484,6 @@ func _build_ui() -> void:
 	sens.custom_minimum_size = Vector2(200, 24)
 	sens.value_changed.connect(func(x): Game.mouse_sensitivity = x)
 	v.add_child(_row("Sensibilité souris", sens))
-	var mus := HSlider.new()
-	mus.max_value = 1.0
-	mus.step = 0.05
-	mus.value = Game.music_volume
-	mus.custom_minimum_size = Vector2(200, 24)
-	mus.value_changed.connect(func(x):
-		Game.music_volume = x
-		Audio.apply_volumes())
-	v.add_child(_row("Musique", mus))
-	var sfx := HSlider.new()
-	sfx.max_value = 1.0
-	sfx.step = 0.05
-	sfx.value = Game.sfx_volume
-	sfx.custom_minimum_size = Vector2(200, 24)
-	sfx.value_changed.connect(func(x):
-		Game.sfx_volume = x
-		Audio.apply_volumes())
-	v.add_child(_row("Effets sonores", sfx))
 	var kc := CheckBox.new()
 	kc.text = "Kill cam (rejouer le tir fatal)"
 	kc.button_pressed = Game.kill_cam
@@ -391,18 +491,9 @@ func _build_ui() -> void:
 		Game.kill_cam = b
 		Game.save_settings())
 	v.add_child(kc)
-	var full := CheckBox.new()
-	full.text = "Plein écran"
-	full.button_pressed = Game.fullscreen
-	full.toggled.connect(func(b):
-		Game.fullscreen = b
-		Game.apply_video())
-	v.add_child(full)
+	v.add_child(_section("TOUCHES ET RÉTICULE"))
 	v.add_child(_button("CONFIGURER LES TOUCHES", func(): _keybinds.show()))
 	v.add_child(_button("PERSONNALISER LE RÉTICULE", func(): _crosshair.show()))
-	v.add_child(_button("QUITTER", func():
-		_save()
-		get_tree().quit()))
 
 	# Lobby (right)
 	_lobby_panel = PanelContainer.new()
@@ -462,6 +553,17 @@ func _build_ui() -> void:
 	credits.offset_bottom = -4
 	credits.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(credits)
+	var version := UIStyle.label("v%s" % Game.GAME_VERSION, 14, UIStyle.DIM, 600)
+	version.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	version.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	version.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	version.offset_left = -200
+	version.offset_right = -14
+	version.offset_top = -24
+	version.offset_bottom = -6
+	version.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(version)
 
 	_keybinds = KeybindMenu.new()
 	_keybinds.hide()
@@ -505,6 +607,17 @@ func _rebuild_help() -> void:
 	for b in binds:
 		_help_grid.add_child(UIStyle.label(b[0], 14, UIStyle.DIM))
 		_help_grid.add_child(UIStyle.label(b[1], 14, UIStyle.TEXT, 600))
+
+
+func _show_page(page: String) -> void:
+	for k in _pages:
+		(_pages[k] as Control).visible = k == page
+
+
+func _back_button() -> Button:
+	var b := _button("←  RETOUR", func(): _show_page("home"))
+	b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	return b
 
 
 func _section(text: String) -> Control:
@@ -554,7 +667,8 @@ func _apply_mode_rows() -> void:
 		(r as Control).visible = m == Game.MODE_TDM
 	_row_br.visible = m == Game.MODE_BR
 	_row_diff.visible = m != Game.MODE_PH and m != Game.MODE_ZOMBIE
-	_mode_note.text = ["Deux équipes, manches successives, à terre / relevage.", "Chacun pour soi : tout le monde est lâché aux quatre coins de la carte, une zone se resserre, le dernier en vie gagne.", "Un chasseur (tiré au sort) contre des props. Les props se transforment en objets (E) pendant 30 s, puis le chasseur les traque : un tir tue. Sifflement des props toutes les 20 s. Pas de bots, 2 joueurs minimum.", "Coopération : tenez %d vagues de monstres. Faucheurs (colosses aux griffes qui balayent le sol) et Bondisseurs (bonds fulgurants). Entre les vagues, les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots." % MonsterManager.WAVES][m]
+	_game_empty.visible = m == Game.MODE_PH or m == Game.MODE_ZOMBIE
+	_mode_note.text = ["Deux équipes, manches successives, à terre / relevage.", "Chacun pour soi : tout le monde est lâché aux quatre coins de la carte, une zone se resserre, le dernier en vie gagne.", "Un chasseur (tiré au sort) contre des props. Les props se transforment en objets (E) pendant 30 s, puis le chasseur les traque : un tir tue. Sifflement des props toutes les 20 s. Pas de bots, 2 joueurs minimum.", "Coopération : tenez %d vagues de monstres. Faucheurs (colosses aux griffes qui balayent le sol), Bondisseurs (bonds fulgurants) et Rôdeurs (lents, en nombre). Entre les vagues, dépensez votre ferraille à l'établi de la base ; les tombés se relèvent et les caisses se remplissent. Seul ou en équipe, sans bots." % MonsterManager.WAVES][m]
 	if _team_btn:
 		_team_btn.visible = m == Game.MODE_TDM
 
@@ -566,14 +680,15 @@ func _refresh_lobby() -> void:
 	var online := Game.is_online() and not Game.lobby.is_empty()
 	_lobby_panel.visible = online
 	var is_host := multiplayer.is_server()
-	for c in [_mode, _mapsel, _modesel, _diffsel, _brsel] + _bots:
+	for c in [_mode, _mapsel, _diffsel, _brsel] + _bots + _mode_btns:
 		c.disabled = online and not is_host
 	_rounds.editable = not online or is_host
 	if not online:
 		return
 	# Reflect host config on clients
 	_mode.select(clampi(int(Game.config.team_size) - 1, 0, Game.MAX_TEAM - 1))
-	_modesel.select(Game.mode())
+	for i in _mode_btns.size():
+		_mode_btns[i].set_pressed_no_signal(i == Game.mode())
 	_diffsel.select(int(Game.config.difficulty))
 	_brsel.select(int(Game.config.br_bots))
 	for i in Game.MAPS.size():

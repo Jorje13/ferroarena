@@ -23,6 +23,8 @@ signal bandage_changed
 signal inventory_changed
 signal loot_message(text: String)
 signal knocked
+## Zombie survival: scrap or upgrades changed.
+signal wallet_changed
 
 const MAX_HEALTH := 100.0
 ## Ferro: 50 per body hit, x2 on the head. With a full shield (50) + 100 HP:
@@ -1256,7 +1258,7 @@ func _start_reload() -> void:
 
 ## Reload tempo: the ergonomic stock speeds the whole sequence up a little.
 func reload_speed() -> float:
-	return Items.STOCK_RELOAD_SPEED if has_stock else 1.0
+	return (Items.STOCK_RELOAD_SPEED if has_stock else 1.0) * Shop.reload_mult(upgrades)
 
 
 func _advance_reload(delta: float) -> void:
@@ -1655,9 +1657,10 @@ func net_respawn(pos: Vector3, yaw: float) -> void:
 	inventory = Items.empty_inventory()
 	equipped = 0
 	interact_progress = 0.0
-	has_silencer = false
-	has_stock = false
-	rig.set_attachments(false, false)
+	# Zombie survival: attachments bought at the workbench survive a death.
+	has_silencer = upgrades.has("silencer")
+	has_stock = upgrades.has("stock")
+	rig.set_attachments(has_silencer, has_stock)
 	_clear_disguise()
 	inventory_changed.emit()
 	flags = F_LOADED
@@ -2509,6 +2512,92 @@ func net_inventory(inv: Array) -> void:
 func net_loot(text: String) -> void:
 	if _from_server():
 		loot_message.emit(text)
+
+
+# ---------------------------------------------------------------- zombie workbench
+
+## Zombie survival: scrap to spend at the workbench and the upgrades bought there (id -> level).
+var scrap := 0
+var upgrades := {}
+
+
+func upgrade_level(id: String) -> int:
+	return int(upgrades.get(id, 0))
+
+
+## Local player: buy `id` at the workbench (the server checks everything).
+func buy(id: String) -> void:
+	if multiplayer.is_server():
+		server_do_buy(id)
+	else:
+		server_buy.rpc_id(1, id)
+
+
+@rpc("any_peer", "reliable")
+func server_buy(id: String) -> void:
+	if multiplayer.is_server() and multiplayer.get_remote_sender_id() == get_multiplayer_authority():
+		server_do_buy(id)
+
+
+func server_do_buy(id: String) -> void:
+	var e := Shop.entry(id)
+	if e.is_empty() or not alive or not arena.can_shop(self):
+		return
+	var lvl := upgrade_level(id)
+	var price := Shop.cost(e, lvl)
+	var to := get_multiplayer_authority() if not is_bot else 1
+	if price < 0:
+		net_loot.rpc_id(to, "DÉJÀ AU MAXIMUM")
+		return
+	if scrap < price:
+		net_loot.rpc_id(to, "PAS ASSEZ DE FERRAILLE")
+		return
+	var up := upgrades.duplicate()
+	match id:
+		"bandage":
+			if bandages >= Items.SUPPLIES.bandage.max:
+				net_loot.rpc_id(to, "BANDAGES AU MAXIMUM")
+				return
+			net_bandage.rpc("", bandages + 1, false)
+		"cell":
+			if shield_charges >= Items.SUPPLIES.cell.max:
+				net_loot.rpc_id(to, "CELLULES AU MAXIMUM")
+				return
+			net_shield_charge.rpc(false, shield_charges + 1)
+		"heal":
+			if health >= MAX_HEALTH and shield >= MAX_SHIELD:
+				net_loot.rpc_id(to, "DÉJÀ EN PLEINE FORME")
+				return
+			net_health.rpc(MAX_HEALTH, MAX_SHIELD, global_position, false)
+		"silencer", "stock":
+			up[id] = 1
+			net_attach.rpc(id)
+		_:
+			if Items.DEFS.has(id):
+				var inv := inventory.duplicate(true)
+				if Items.add(inv, id, 1) <= 0:
+					net_loot.rpc_id(to, "INVENTAIRE PLEIN")
+					return
+				net_inventory.rpc(inv)
+			else:
+				up[id] = lvl + 1
+	net_wallet.rpc(scrap - price, up)
+	if not is_bot:
+		net_loot.rpc_id(to, "ACHAT : " + String(e.name) + ((" NIV. %d" % (lvl + 1)) if Shop.is_upgrade(e) and Shop.max_level(e) > 1 else ""))
+
+
+## Server: scrap earned (kills, waves held).
+func server_add_scrap(n: int) -> void:
+	net_wallet.rpc(scrap + n, upgrades)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func net_wallet(p_scrap: int, p_upgrades: Dictionary) -> void:
+	if not _from_server():
+		return
+	scrap = p_scrap
+	upgrades = p_upgrades
+	wallet_changed.emit()
 
 
 ## Called by this player's projectile when it hits a barricade.

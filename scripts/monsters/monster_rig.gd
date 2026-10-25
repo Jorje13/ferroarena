@@ -5,7 +5,8 @@ extends Node3D
 ## puppet is not needed: the server only simulates) and on every client.
 ##
 ## Kinds (see MonsterRig.KINDS): 0 = Faucheur (tall, arms down to the ground, long claws),
-## 1 = Bondisseur (skeletal, hunched, leaps).
+## 1 = Bondisseur (skeletal, hunched, leaps), 2 = Rôdeur (walker: slow, shambles straight at
+## its prey, arms reaching, grabs and bites).
 ## Animation states are plain names: idle, walk, run, windup, strike, crouch, leap, land,
 ## stagger, spawn, dead.
 
@@ -25,6 +26,14 @@ const KINDS := [
 		"hips": 1, "spine": [2, 3, 4, 5], "neck": 6, "head": 7,
 		"arm_l": [10, 11, 12], "arm_r": [35, 36, 37], "leg_l": [59, 60, 61], "leg_r": [64, 65, 66],
 		"stride": 0.5, "arm_swing": 0.5, "leg_swing": 0.6, "bob": 0.04, "lean_walk": 0.2,
+	},
+	{
+		# T-pose rig (arms straight out sideways): MonsterPose swings them forward itself.
+		"id": "walker", "name": "Rôdeur", "scene": "res://assets/monsters/walker.glb",
+		"scale": 1.05, "hp": 130.0, "speed": 1.5, "radius": 0.38,
+		"hips": 1, "spine": [2, 3, 4, 5], "neck": 6, "head": 7,
+		"arm_l": [10, 11, 12], "arm_r": [15, 16, 17], "leg_l": [19, 20, 21], "leg_r": [24, 25, 26],
+		"stride": 0.42, "arm_swing": 0.14, "leg_swing": 0.21, "bob": 0.03, "lean_walk": 0.22,
 	},
 ]
 

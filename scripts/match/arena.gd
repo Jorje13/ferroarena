@@ -40,6 +40,7 @@ func _ready() -> void:
 	map = load(info.script).new()
 	map.name = "Map"
 	add_child(map)
+	map.zombie = Game.is_zombie()
 	map.build(Game.quality)
 	Audio.start_ambience(map.biome)
 
@@ -161,6 +162,20 @@ func net_round_reset(active: Array, specials: Dictionary) -> void:
 	for s in smokes.duplicate():
 		if is_instance_valid(s):
 			s.queue_free()
+
+
+## Zombie survival: is `p` standing at the workbench?
+func near_bench(p: Player) -> bool:
+	if monsters == null or map.zombie_bench.is_empty() or not p.alive:
+		return false
+	var to: Vector3 = map.zombie_bench.pos - p.global_position
+	to.y = 0.0
+	return to.length() < Shop.RANGE
+
+
+## ...and may it be used now (between waves only).
+func can_shop(p: Player) -> bool:
+	return near_bench(p) and monsters.phase == MonsterManager.Phase.BREAK
 
 
 ## Closest lootable chest within `reach` the player is roughly facing.

@@ -3,13 +3,14 @@ extends Node
 ## Zombie survival: wave director (server) and monster replication (all peers).
 ## The server spawns the monsters, runs their AI and sends their state ~20 times a second;
 ## clients show puppets that follow it. A wave is a batch of Bondisseurs (fast, many) and
-## Faucheurs (tanks, long reach) that grows each time; between waves the dead come back, the
+## Faucheurs (tanks, long reach), plus a tide of slow Rôdeurs, that grows each time; between waves the dead come back, the
 ## knocked-down are picked up, and the crates are restocked. Surviving WAVES waves wins.
 
 const WAVES := 10
 const PLAYER_DAMAGE_MULT := 2.0
-const BREAK_TIME := 14.0
-const FIRST_DELAY := 4.0
+## Breaks are long enough to shop at the workbench.
+const BREAK_TIME := 30.0
+const FIRST_DELAY := 25.0
 const SNAPSHOT_HZ := 20.0
 
 enum Phase { IDLE, WAVE, BREAK, DONE }
@@ -28,6 +29,7 @@ var _queue: Array = []
 var _spawn_cd := 0.0
 var _snap_t := 0.0
 var _rng := RandomNumberGenerator.new()
+var _mon_test_done := false
 
 signal wave_changed
 
@@ -67,6 +69,8 @@ func server_reset() -> void:
 
 
 func server_go() -> void:
+	for p: Player in arena.players:
+		p.net_wallet.rpc(Shop.START_SCRAP, {})
 	wave = 0
 	phase = Phase.BREAK
 	break_t = FIRST_DELAY
@@ -84,6 +88,9 @@ func _plan_wave(w: int) -> Array:
 	var list := []
 	for i in count:
 		list.append(0 if i < fauch else 1)
+	# Rôdeurs: a slow tide on top of the hunters, a big share of the early waves.
+	for i in int((3.0 + 1.5 * w) * scale):
+		list.append(2)
 	# Tanks come in last half of the wave, packs first: shuffle only within thirds.
 	list.shuffle()
 	return list
@@ -106,6 +113,8 @@ func _server_start_wave() -> void:
 func _server_break() -> void:
 	phase = Phase.BREAK
 	break_t = BREAK_TIME
+	for p: Player in arena.players:
+		p.server_add_scrap(Shop.WAVE_SCRAP)
 	# Dead come back, knocked-down are picked up, everyone gets a little shield back.
 	var sp_i := 0
 	for p: Player in arena.players:
@@ -134,6 +143,18 @@ func _process(delta: float) -> void:
 		return
 	if arena.match_mgr.state != MatchManager.State.LIVE:
 		return
+	# Debug: --mon_test=KIND[,COUNT] drops monsters 7-9 m in front of the first player at once.
+	if Game.debug.has("mon_test") and not _mon_test_done and not arena.players.is_empty():
+		_mon_test_done = true
+		var a := str(Game.debug.mon_test).split(",")
+		var p: Player = arena.players[0]
+		var fwd := Vector3(-sin(p.body_yaw), 0, -cos(p.body_yaw))
+		for i in (int(a[1]) if a.size() > 1 else 3):
+			var pos := p.global_position + fwd * (7.0 + i * 0.7) + fwd.cross(Vector3.UP) * (i - 1) * 1.6
+			var id := _next_id
+			_next_id += 1
+			_make(id, int(a[0]), pos, p.body_yaw)
+			_net_spawn.rpc(id, int(a[0]), pos, p.body_yaw)
 	match phase:
 		Phase.BREAK:
 			break_t -= delta
@@ -141,7 +162,7 @@ func _process(delta: float) -> void:
 				_server_start_wave()
 		Phase.WAVE:
 			_spawn_cd -= delta
-			var cap := 12 + 2 * arena.players.size()
+			var cap := 16 + 2 * arena.players.size()
 			if not _queue.is_empty() and _spawn_cd <= 0.0 and alive_list().size() < cap:
 				_spawn_cd = clampf(1.4 - 0.08 * wave, 0.45, 1.4)
 				_server_spawn(_queue.pop_back())
@@ -159,7 +180,7 @@ func _process(delta: float) -> void:
 
 
 ## A random navmesh point out of the survivors' sight and a good way off.
-func _spawn_point() -> Vector3:
+func _spawn_point(min_d := 22.0) -> Vector3:
 	var map := arena.get_world_3d().navigation_map
 	var space := arena.get_world_3d().direct_space_state
 	var best := Vector3.INF
@@ -180,7 +201,7 @@ func _spawn_point() -> Vector3:
 				seen = space.intersect_ray(q).is_empty()
 		if nearest == INF:
 			nearest = 40.0
-		var score := minf(nearest, 55.0) - (45.0 if seen else 0.0) - (60.0 if nearest < 22.0 else 0.0) + _rng.randf() * 6.0
+		var score := minf(nearest, 55.0) - (45.0 if seen else 0.0) - (60.0 if nearest < min_d else 0.0) + _rng.randf() * 6.0
 		if score > best_score:
 			best_score = score
 			best = c
@@ -191,7 +212,8 @@ func _spawn_point() -> Vector3:
 
 
 func _server_spawn(kind: int) -> void:
-	var pos := _spawn_point()
+	# Rôdeurs are slow: they may rise closer (still out of sight).
+	var pos := _spawn_point(13.0 if kind == 2 else 22.0)
 	var yaw := _rng.randf() * TAU
 	var id := _next_id
 	_next_id += 1
@@ -230,6 +252,8 @@ func _net_remove(id: int) -> void:
 
 func server_on_death(m: Monster, attacker: Player) -> void:
 	left = maxi(0, left - 1)
+	if attacker and is_instance_valid(attacker):
+		attacker.server_add_scrap(roundi(Shop.KILL_SCRAP[m.kind] * Shop.scrap_mult(attacker.upgrades)))
 	if attacker and arena.match_mgr.stats.has(String(attacker.name)):
 		arena.match_mgr.stats[String(attacker.name)].k += 1
 		arena.match_mgr._sync_stats()
@@ -301,7 +325,7 @@ func server_sound(id: int, snd: String) -> void:
 func _net_sound(id: int, snd: String) -> void:
 	var m := get_monster(id)
 	if m:
-		Audio.play_3d(snd, m.global_position + Vector3(0, 1.2, 0), 1.0, 60.0, 0.1, 1.0 if m.kind == 1 else 0.8)
+		Audio.play_3d(snd, m.global_position + Vector3(0, 1.2, 0), 1.0, 60.0, 0.1, [0.8, 1.0, 0.65][m.kind])
 
 
 func server_fx(id: int, kind: String, pos: Vector3, dir: Vector3) -> void:
