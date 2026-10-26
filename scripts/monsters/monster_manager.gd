@@ -173,8 +173,9 @@ func _process(delta: float) -> void:
 			var pos := p.global_position + fwd * (7.0 + i * 0.7) + fwd.cross(Vector3.UP) * (i - 1) * 1.6
 			var id := _next_id
 			_next_id += 1
-			_make(id, int(a[0]), pos, p.body_yaw)
-			_net_spawn.rpc(id, int(a[0]), pos, p.body_yaw)
+			# Facing the player, as they come at them.
+			_make(id, int(a[0]), pos, p.body_yaw + PI)
+			_net_spawn.rpc(id, int(a[0]), pos, p.body_yaw + PI)
 	match phase:
 		Phase.BREAK:
 			break_t -= delta
@@ -290,7 +291,7 @@ func _net_wave_origin(pos: Vector3) -> void:
 	wave_origin = pos
 	wave_origin_changed.emit()
 	_origin_beam(pos)
-	Audio.play_3d("mon_screech", pos + Vector3(0, 2, 0), 12.0, 400.0, 0.0, 0.6)
+	Audio.play_3d("zmb_howl", pos + Vector3(0, 2, 0), 12.0, 400.0, 0.0, 0.85)
 
 
 ## Red light column over a wave's origin, fading out after a while.

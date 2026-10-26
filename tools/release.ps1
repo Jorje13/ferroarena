@@ -1,5 +1,6 @@
-# Une commande pour livrer : (version) -> commit + push du code -> export Windows -> zip -> release GitHub.
-# Les joueurs recoivent la nouvelle version au prochain lancement (voir scripts/autoload/updater.gd).
+# Une commande pour livrer : (version) -> commit + push du code -> export Windows -> zip + patchs
+# -> dossier "bin" du Google Drive. Les joueurs recoivent la nouvelle version au prochain lancement :
+# le jeu et l'installateur lisent ce dossier (voir scripts/autoload/updater.gd).
 #
 #   powershell -File tools/release.ps1 -Version 0.14.1 -Message "Correctifs vault"
 #
@@ -8,12 +9,15 @@
 # -Message  message du commit et notes de la release.
 # -SkipExport  republie le dernier export sans reexporter.
 # -DriveDir  dossier "bin" du Google Drive partage (synchronise), ou les telechargements sont servis.
-# Prerequis : Git, GitHub CLI connecte (gh auth login), modeles d'export Godot installes.
+# -GitHub   publie aussi une release GitHub (0.27.2 seulement : les installations plus anciennes
+#           cherchent encore leurs mises a jour sur GitHub et y trouvent l'updater Drive).
+# Prerequis : Git, modeles d'export Godot installes (+ GitHub CLI connecte pour -GitHub).
 
 param(
 	[string]$Version = "",
 	[string]$Message = "",
 	[switch]$SkipExport,
+	[switch]$GitHub,
 	[string]$DriveDir = "G:\Mon Drive\Ferro Arena\bin"
 )
 
@@ -24,7 +28,7 @@ $godot = if ($env:GODOT) { $env:GODOT } else { (Get-Command godot -ErrorAction S
 $git = (Get-Command git -ErrorAction SilentlyContinue).Source
 $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
 $repo = [regex]::Match((& git -C $proj remote get-url origin), 'github\.com[:/](.+?)(\.git)?$').Groups[1].Value
-foreach ($tool in @($godot, $git, $gh)) { if (-not (Test-Path $tool)) { throw "Introuvable : $tool" } }
+foreach ($tool in @($godot, $git) + $(if ($GitHub) { @($gh) } else { @() })) { if (-not $tool -or -not (Test-Path $tool)) { throw "Introuvable : $tool" } }
 Set-Location $proj
 
 # 1. Version
@@ -105,25 +109,27 @@ try {
 Copy-Item -LiteralPath $exe -Destination (Join-Path $archive "FerroArena-$ver.exe") -Force
 Get-ChildItem $archive -Filter 'FerroArena-*.exe' | Sort-Object { [version]($_.BaseName -replace '^FerroArena-', '') } -Descending | Select-Object -Skip 12 | Remove-Item -Force
 
-# 5. Release GitHub (remplace celle du meme tag si elle existe)
-# (gh ecrit sur stderr quand la release n'existe pas : ne pas laisser PowerShell y voir une erreur fatale)
-$ErrorActionPreference = 'Continue'
-& $gh release view $tag --repo $repo 2>$null | Out-Null
-$exists = ($LASTEXITCODE -eq 0)
-$ErrorActionPreference = 'Stop'
-if ($exists) {
-	"== Release $tag existante : zip remplace =="
-	& $gh release upload $tag $zip @patches --repo $repo --clobber
-} else {
-	"== Creation de la release $tag =="
-	& $gh release create $tag $zip @patches --repo $repo --target main --title "Ferro Arena $tag" --notes $Message
+# 5. Release GitHub (seulement avec -GitHub ; remplace celle du meme tag si elle existe)
+if ($GitHub) {
+	# (gh ecrit sur stderr quand la release n'existe pas : ne pas laisser PowerShell y voir une erreur fatale)
+	$ErrorActionPreference = 'Continue'
+	& $gh release view $tag --repo $repo 2>$null | Out-Null
+	$exists = ($LASTEXITCODE -eq 0)
+	$ErrorActionPreference = 'Stop'
+	if ($exists) {
+		"== Release $tag existante : zip remplace =="
+		& $gh release upload $tag $zip @patches --repo $repo --clobber
+	} else {
+		"== Creation de la release $tag =="
+		& $gh release create $tag $zip @patches --repo $repo --target main --title "Ferro Arena $tag" --notes $Message
+	}
+	if ($LASTEXITCODE -ne 0) { throw "La release a echoue" }
+	"Livre : https://github.com/$repo/releases/tag/$tag"
 }
-if ($LASTEXITCODE -ne 0) { throw "La release a echoue" }
-"Livre : https://github.com/$repo/releases/tag/$tag"
 
 # 6. Google Drive : les joueurs telechargent depuis le sous-dossier "bin" du dossier partage
-# (ferroarena.jrjx.me) quand il contient les fichiers de cette version, sinon depuis GitHub (voir
-# updater.gd). Noms attendus : FerroArena-<version>.zip et FerroArena-patch-<ancienne>-to-<version>.fdl.
+# (ferroarena.jrjx.me) ; la version la plus haute qui s'y trouve est la derniere (voir updater.gd).
+# Noms attendus : FerroArena-<version>.zip et FerroArena-patch-<ancienne>-to-<version>.fdl.
 # Copies dans le dossier synchronise par Google Drive pour ordinateur (-DriveDir), les fichiers des
 # versions precedentes y sont retires ; sans lui, prepares dans build\drive pour un depot a la main.
 $drive = $DriveDir
@@ -140,3 +146,4 @@ foreach ($p in $patches) { Copy-Item -LiteralPath $p -Destination $drive -Force 
 if ($synced) { "== Copie dans Google Drive : $drive (envoi en arriere-plan par Google Drive pour ordinateur) ==" }
 else { "== Google Drive introuvable ($DriveDir) : fichiers a deposer a la main dans le dossier bin ==" }
 Get-ChildItem -LiteralPath $drive -File | ForEach-Object { "  {0}  ({1:N0} Mo)" -f $_.Name, ($_.Length / 1MB) }
+"Livre : v$ver (le jeu et l'installateur la trouveront dans le Drive une fois l'envoi termine)"

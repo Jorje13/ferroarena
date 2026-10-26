@@ -278,7 +278,7 @@ func _impact(hit: Dictionary) -> void:
 		if is_instance_valid(mon):
 			mon.rig.hit_flash()
 			if authoritative and is_instance_valid(shooter) and mon.alive:
-				shooter.report_monster_hit(shot_id, mon.id, (col as Node).get_meta("zone") == "head", hit.position)
+				shooter.report_monster_hit(shot_id, mon.id, (col as Node).get_meta("zone") == "head" or mon.ray_crosses_head(hit.position, _vel), hit.position)
 		queue_free()
 		return
 	if authoritative and Game.debug.has("log_shots") and debug_pred != "":

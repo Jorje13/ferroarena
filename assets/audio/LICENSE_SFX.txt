@@ -1,0 +1,14 @@
+Sons de corps, bruitages et creatures (tous CC0 / domaine public), montes avec ffmpeg par tools/build_sfx.py
+(decoupe, fondus, mixages).
+
+- Kenney « Impact Sounds », « Interface Sounds », « RPG Audio » (kenney.nl, CC0)
+  -> foley/hurt_*, impacts/flesh_*, impacts/soft_*, foley/clink_*, foley/cloth_*, foley/bandage_*,
+     foley/roll_*, foley/mantle_*, foley/knock_*, foley/attach_*, foley/ui_click, monsters/slam_*
+- OpenGameArt « 80 CC0 creature SFX » -> zombie/howl_1
+- OpenGameArt « 75 CC0 breaking/falling/hit sfx » -> explosions/debris_*, monsters/slam_* (gravats)
+- OpenGameArt « Swishes Sound Pack » -> monsters/swipe_*
+- OpenGameArt « Air Whoosh » -> foley/whoosh_in, foley/whoosh_out
+- OpenGameArt « Heartbeat single sound » -> foley/heartbeat
+- OpenGameArt « Jump Landing », « Jump landing sound » -> foley/land_*
+- OpenGameArt « Zombie / Skeleton / Monster Voice Effects » (zombieYell) -> zombie/leap_*
+- weapons/ferro_shot_suppressed : ferro_shot_near.wav filtre (passe-bas), voir README.

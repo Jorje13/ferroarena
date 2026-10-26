@@ -19,6 +19,9 @@ const KINDS := [
 		"hips": 1, "spine": [2, 3, 4, 5], "neck": 6, "head": 7,
 		"arm_l": [9, 10, 11], "arm_r": [34, 35, 36], "leg_l": [64, 65, 66], "leg_r": [69, 70, 71],
 		"stride": 0.62, "arm_swing": 0.28, "leg_swing": 0.5, "bob": 0.03, "lean_walk": 0.12,
+		# Hit zones, measured on the mesh (tools/monster_head.gd): head centre in the head bone's
+		# frame and its radius, torso radius around the spine (a little generous, both).
+		"head_off": Vector3(0.0, 0.07, 0.02), "head_r": 0.14, "body_r": 0.24,
 	},
 	{
 		"id": "bondisseur", "name": "Bondisseur", "scene": "res://assets/monsters/bondisseur.glb",
@@ -26,6 +29,7 @@ const KINDS := [
 		"hips": 1, "spine": [2, 3, 4, 5], "neck": 6, "head": 7,
 		"arm_l": [10, 11, 12], "arm_r": [35, 36, 37], "leg_l": [59, 60, 61], "leg_r": [64, 65, 66],
 		"stride": 0.5, "arm_swing": 0.5, "leg_swing": 0.6, "bob": 0.04, "lean_walk": 0.2,
+		"head_off": Vector3(0.0, 0.19, 0.07), "head_r": 0.2, "body_r": 0.27,
 	},
 	{
 		# T-pose rig (arms straight out sideways): MonsterPose swings them forward itself.
@@ -34,6 +38,7 @@ const KINDS := [
 		"hips": 1, "spine": [2, 3, 4, 5], "neck": 6, "head": 7,
 		"arm_l": [10, 11, 12], "arm_r": [15, 16, 17], "leg_l": [19, 20, 21], "leg_r": [24, 25, 26],
 		"stride": 0.42, "arm_swing": 0.14, "leg_swing": 0.21, "bob": 0.03, "lean_walk": 0.22,
+		"head_off": Vector3(0.0, 0.1, 0.015), "head_r": 0.15, "body_r": 0.23,
 	},
 ]
 

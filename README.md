@@ -39,8 +39,8 @@ Export : `Godot --headless --path . --export-release Windows ../build/FerroArena
 
 ## Mises à jour
 
-Le jeu exporté vérifie au lancement les releases GitHub et se met à jour tout seul (`scripts/autoload/updater.gd`).
-Chaque release contient le zip complet et des patchs incrémentiels (`.fdl`, quelques Mo) depuis chacune des douze versions précédentes : le jeu applique d'un coup le patch de sa version vers la dernière, sans passer par les intermédiaires (au-delà, zip complet) ; format et code dans `scripts/util/fdl_source.gd`. Publier : `tools/release.ps1 -Version X.Y.Z -Message "..."` (Git, GitHub CLI et modèles d'export Godot requis, variable `GODOT` pour le chemin de Godot si besoin).
+Le jeu exporté (et l'installateur, `installer/`) cherche au lancement la dernière version dans le dossier `bin` du Google Drive partagé (ferroarena.jrjx.me) : le `FerroArena-<version>.zip` le plus haut. Il se met à jour tout seul (`scripts/autoload/updater.gd`), sans passer par GitHub depuis la 0.27.2.
+Le dossier contient le zip complet et des patchs incrémentiels (`.fdl`, quelques Mo) depuis chacune des douze versions précédentes : le jeu applique d'un coup le patch de sa version vers la dernière, sans passer par les intermédiaires (au-delà, zip complet) ; format et code dans `scripts/util/fdl_source.gd`. Publier : `tools/release.ps1 -Version X.Y.Z -Message "..."` (Git, modèles d'export Godot et Google Drive pour ordinateur requis, variable `GODOT` pour le chemin de Godot si besoin) : commit + push du code, export, copie dans `G:\Mon Drive\Ferro Arena\bin`. `-GitHub` publie aussi une release GitHub (GitHub CLI requis). Tests : `--update_test --update_dry --update_as=0.27.0` montre ce qu'une installation 0.27.0 téléchargerait.
 
 ## Architecture
 

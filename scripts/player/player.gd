@@ -1512,7 +1512,6 @@ func net_health(hp: float, sh: float, from_pos: Vector3, was_hit: bool) -> void:
 				arena.camera_rig.hurt_kick(from_pos, lost_health)
 			if lost_health:
 				Audio.play_2d("hurt", -2.0)
-				Audio.play_2d("pain", -3.0, randf_range(0.92, 1.08))
 			else:
 				Audio.play_2d("shield_zap", -3.0, randf_range(0.95, 1.05))
 			if broke:

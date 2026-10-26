@@ -94,9 +94,10 @@ func setup(p_id: int, p_kind: int, p_manager: MonsterManager) -> void:
 
 
 func _build_hit_bodies() -> void:
-	# Bullets hit a head sphere and a body capsule that follow the animated skeleton.
-	_head_body = _hit_body("head", SphereShape3D.new(), 0.27 * float(data.scale))
-	_body_body = _hit_body("body", CapsuleShape3D.new(), 0.42 * float(data.scale))
+	# Bullets hit a head sphere and a body capsule that follow the animated skeleton. The
+	# capsule stops at the neck: wider, it used to swallow the head and eat every headshot.
+	_head_body = _hit_body("head", SphereShape3D.new(), float(data.head_r) * float(data.scale))
+	_body_body = _hit_body("body", CapsuleShape3D.new(), float(data.body_r) * float(data.scale))
 
 
 func _hit_body(zone: String, shape: Shape3D, radius: float) -> StaticBody3D:
@@ -127,20 +128,77 @@ func _sync_hit_bodies() -> void:
 	_body_body.collision_layer = Hitboxes.LAYER
 	var sk := rig.skeleton
 	var gx := sk.global_transform
-	var head := gx * sk.get_bone_global_pose(int(data.head)).origin
 	var neck := gx * sk.get_bone_global_pose(int(data.neck)).origin
 	var hips := gx * sk.get_bone_global_pose(int(data.hips)).origin
-	_head_body.global_position = head + (head - neck).normalized() * 0.05
+	_head_body.global_position = gx * (sk.get_bone_global_pose(int(data.head)) * (data.head_off as Vector3))
 	var axis := neck - hips
 	var length := axis.length()
 	if length < 0.05:
 		return
 	var cap := (_body_body.get_child(0) as CollisionShape3D).shape as CapsuleShape3D
-	cap.height = length + cap.radius * 2.0
 	var y := axis / length
+	# Rounded top at the neck, bottom a little below the hips.
+	cap.height = length + cap.radius * 0.6
+	hips -= y * cap.radius * 0.6
 	var ref := Vector3.FORWARD if absf(y.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT
 	var x := y.cross(ref).normalized()
 	_body_body.global_transform = Transform3D(Basis(x, y, x.cross(y)), (hips + neck) * 0.5)
+	if Game.debug.has("show_hitzones"):
+		_debug_zones()
+	# Debug --test_headshots: once, rays from the first player's eyes to this monster's head,
+	# chin and chest, printing the zone each one scores.
+	if Game.debug.has("test_headshots") and not has_meta("hs_tested") and Engine.get_physics_frames() > 400:
+		set_meta("hs_tested", true)
+		var p: Player = manager.arena.players[0]
+		var eye := p.eye_position()
+		for t in [["tête", _head_body.global_position], ["menton", _head_body.global_position + Vector3.DOWN * 0.12 * float(data.scale)], ["torse", _body_body.global_position]]:
+			var q := PhysicsRayQueryParameters3D.create(eye, eye + (t[1] - eye) * 1.5, Hitboxes.LAYER)
+			var h := get_world_3d().direct_space_state.intersect_ray(q)
+			var zone := "rien"
+			if h and (h.collider as Node).has_meta("zone"):
+				zone = (h.collider as Node).get_meta("zone")
+				if zone == "body" and ray_crosses_head(h.position, t[1] - eye):
+					zone = "head (via le corps)"
+			print("[HS] %s visé %s -> %s%s" % [data.id, t[0], zone, " (autre monstre)" if h and (h.collider as Node).get_meta("monster", null) != self else ""])
+
+
+## True when a shot that struck the body at `at` (travelling along `vel`) also passes through
+## the head sphere just behind: hunched monsters carry the head low in front of the torso, and
+## a bullet aimed at it would otherwise meet the shoulders first.
+func ray_crosses_head(at: Vector3, vel: Vector3) -> bool:
+	if vel.length_squared() < 0.0001:
+		return false
+	var d := vel.normalized()
+	var c := _head_body.global_position - at
+	var along := c.dot(d)
+	if along < -0.1 or along > 0.6:
+		return false
+	var r := ((_head_body.get_child(0) as CollisionShape3D).shape as SphereShape3D).radius
+	return (c - d * along).length() < r
+
+
+## Debug --show_hitzones: translucent head (red) and body (blue) hit zones.
+func _debug_zones() -> void:
+	for b: StaticBody3D in [_head_body, _body_body]:
+		if b.get_child_count() > 1:
+			continue
+		var mi := MeshInstance3D.new()
+		var sh := (b.get_child(0) as CollisionShape3D).shape
+		if sh is SphereShape3D:
+			mi.mesh = SphereMesh.new()
+			(mi.mesh as SphereMesh).radius = (sh as SphereShape3D).radius
+			(mi.mesh as SphereMesh).height = (sh as SphereShape3D).radius * 2.0
+		else:
+			mi.mesh = CapsuleMesh.new()
+			(mi.mesh as CapsuleMesh).radius = (sh as CapsuleShape3D).radius
+			(mi.mesh as CapsuleMesh).height = (sh as CapsuleShape3D).height
+		var m := StandardMaterial3D.new()
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.no_depth_test = true
+		m.albedo_color = Color(1, 0.2, 0.2, 0.35) if b == _head_body else Color(0.2, 0.4, 1, 0.3)
+		mi.material_override = m
+		b.add_child(mi)
 
 
 func set_state(s: String) -> void:
@@ -166,9 +224,9 @@ func _on_state(s: String, _prev: String) -> void:
 		"strike":
 			Audio.play_3d("mon_swipe", pos, 2.0, 40.0, 0.1, [0.8, 1.1, 0.9][kind])
 		"crouch":
-			Audio.play_3d("mon_growl", pos, 2.0, 55.0, 0.05, 1.6)
+			Audio.play_3d("zmb_snarl", pos, 0.0, 50.0, 0.06, 1.15)
 		"leap":
-			Audio.play_3d("mon_screech", pos, 4.0, 70.0, 0.06)
+			Audio.play_3d("zmb_leap", pos, 4.0, 70.0, 0.06, 1.12)
 		"land":
 			Audio.play_3d("mon_slam", global_position, 2.0, 55.0, 0.08)
 		"dead":
@@ -193,7 +251,8 @@ func _physics_process(delta: float) -> void:
 	_last_pos = global_position
 	var vel := moved / maxf(delta, 0.0001)
 	if multiplayer.is_server():
-		if alive:
+		# Debug --mon_freeze: monsters stand still (hit-zone captures, aim tests).
+		if alive and not Game.debug.has("mon_freeze"):
 			_ai(delta)
 	else:
 		global_position = global_position.lerp(net_pos, 1.0 - exp(-delta * 14.0))

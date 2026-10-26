@@ -36,47 +36,7 @@ func _ready() -> void:
 	_make_big_bore()
 	_make_feedback()
 	_make_blast_layers()
-	_make_monsters()
 	_load_files()
-
-
-## Zombie-mode monsters: growl (rough, wavering low voice), claw swipe, screech (rising
-## shriek), ground slam and death rattle (falling growl).
-func _make_monsters() -> void:
-	streams["mon_growl"] = _wav(_voice(0.9, 70.0, 55.0, 0.55, 3.0))
-	streams["mon_death"] = _wav(_voice(1.3, 95.0, -50.0, 0.6, 2.0))
-	streams["mon_screech"] = _wav(_voice(0.7, 360.0, 520.0, 0.5, 5.0))
-	var s := _buf(0.35)
-	var lp := 0.0
-	for i in s.size():
-		var t := float(i) / RATE
-		lp += (_rng.randf_range(-1.0, 1.0) - lp) * 0.5
-		s[i] = (_rng.randf_range(-1.0, 1.0) - lp) * sin(PI * clampf(t / 0.35, 0.0, 1.0)) * 0.55
-	streams["mon_swipe"] = _wav(s)
-	s = _buf(0.7)
-	_thud_at(s, 0.0, 48.0, 1.0, 0.1)
-	_thud_at(s, 0.05, 90.0, 0.5, 0.06)
-	_friction(s, 0.02, 0.4, 0.4, 0.25)
-	streams["mon_slam"] = _wav(s)
-
-
-## Rough "voice": sawtooth with vibrato and noisy growl, pitch gliding by `glide` Hz over `dur`.
-func _voice(dur: float, f0: float, glide: float, amp: float, rough: float) -> PackedFloat32Array:
-	var s := _buf(dur)
-	var ph := 0.0
-	var lp := 0.0
-	for i in s.size():
-		var t := float(i) / RATE
-		var u := t / dur
-		var f := f0 + glide * u + 6.0 * sin(TAU * 6.0 * t)
-		ph = fmod(ph + f / RATE, 1.0)
-		var saw := ph * 2.0 - 1.0
-		# Amplitude flutter gives the growl its rasp.
-		var flutter := 0.65 + 0.35 * sin(TAU * (28.0 + rough * 6.0) * t)
-		lp += (saw - lp) * 0.25
-		var env := minf(t * 14.0, 1.0) * (1.0 - smoothstep(0.6, 1.0, u))
-		s[i] = (lp * 0.9 + _rng.randf_range(-1.0, 1.0) * 0.12 * rough) * flutter * env * amp
-	return s
 
 
 ## Big-bore report layers for the Ferro:
@@ -579,6 +539,32 @@ const FILES := {
 	"barricade_place": "res://assets/audio/impacts/metal_falling_02.ogg",
 	"barricade_break": "res://assets/audio/impacts/wood_breaking_02.ogg",
 	"chest_open": "res://assets/audio/impacts/misc_03.ogg",
+	# Body, foley and creature sounds (CC0, see assets/audio/LICENSE_SFX.txt),
+	# replacing the first synthesised versions.
+	"mon_swipe": ["res://assets/audio/monsters/swipe_1.ogg", "res://assets/audio/monsters/swipe_2.ogg", "res://assets/audio/monsters/swipe_3.ogg", "res://assets/audio/monsters/swipe_4.ogg", "res://assets/audio/monsters/swipe_5.ogg", "res://assets/audio/monsters/swipe_6.ogg"],
+	"mon_slam": ["res://assets/audio/monsters/slam_1.ogg", "res://assets/audio/monsters/slam_2.ogg", "res://assets/audio/monsters/slam_3.ogg", "res://assets/audio/monsters/slam_4.ogg"],
+	"zmb_leap": ["res://assets/audio/zombie/leap_1.ogg", "res://assets/audio/zombie/leap_2.ogg", "res://assets/audio/zombie/leap_3.ogg", "res://assets/audio/zombie/leap_4.ogg", "res://assets/audio/zombie/leap_5.ogg"],
+	"zmb_howl": "res://assets/audio/zombie/howl_1.ogg",
+	"hurt": ["res://assets/audio/foley/hurt_1.ogg", "res://assets/audio/foley/hurt_2.ogg", "res://assets/audio/foley/hurt_3.ogg", "res://assets/audio/foley/hurt_4.ogg", "res://assets/audio/foley/hurt_5.ogg"],
+	"flesh_hit": ["res://assets/audio/impacts/flesh_1.ogg", "res://assets/audio/impacts/flesh_2.ogg", "res://assets/audio/impacts/flesh_3.ogg", "res://assets/audio/impacts/flesh_4.ogg", "res://assets/audio/impacts/flesh_5.ogg"],
+	"impact_soft": ["res://assets/audio/impacts/soft_1.ogg", "res://assets/audio/impacts/soft_2.ogg", "res://assets/audio/impacts/soft_3.ogg", "res://assets/audio/impacts/soft_4.ogg", "res://assets/audio/impacts/soft_5.ogg"],
+	"ferro_eject": ["res://assets/audio/foley/clink_2.ogg", "res://assets/audio/foley/clink_3.ogg", "res://assets/audio/foley/clink_5.ogg"],
+	"grenade_spoon": ["res://assets/audio/foley/clink_1.ogg", "res://assets/audio/foley/clink_4.ogg"],
+	"land": ["res://assets/audio/foley/land_1.ogg", "res://assets/audio/foley/land_2.ogg", "res://assets/audio/foley/land_3.ogg", "res://assets/audio/foley/land_4.ogg"],
+	"roll": ["res://assets/audio/foley/roll_1.ogg", "res://assets/audio/foley/roll_2.ogg", "res://assets/audio/foley/roll_3.ogg"],
+	"mantle": ["res://assets/audio/foley/mantle_1.ogg", "res://assets/audio/foley/mantle_2.ogg", "res://assets/audio/foley/mantle_3.ogg"],
+	"knock": ["res://assets/audio/foley/knock_1.ogg", "res://assets/audio/foley/knock_2.ogg"],
+	"bandage": ["res://assets/audio/foley/bandage_1.ogg", "res://assets/audio/foley/bandage_2.ogg"],
+	"ads_in": ["res://assets/audio/foley/cloth_3.ogg", "res://assets/audio/foley/cloth_4.ogg"],
+	"ads_out": ["res://assets/audio/foley/cloth_2.ogg"],
+	"attach_stock": "res://assets/audio/foley/attach_stock.ogg",
+	"attach_silencer": "res://assets/audio/foley/attach_silencer.ogg",
+	"heartbeat": "res://assets/audio/foley/heartbeat.ogg",
+	"killcam_in": "res://assets/audio/foley/whoosh_in.ogg",
+	"killcam_out": "res://assets/audio/foley/whoosh_out.ogg",
+	"expl_debris": ["res://assets/audio/explosions/debris_1.ogg", "res://assets/audio/explosions/debris_2.ogg", "res://assets/audio/explosions/debris_3.ogg", "res://assets/audio/explosions/debris_4.ogg"],
+	"sil_shot": "res://assets/audio/weapons/ferro_shot_suppressed.ogg",
+	"ui": "res://assets/audio/foley/ui_click.ogg",
 }
 const MUSIC := {
 	"menu": "res://assets/audio/music/synthwave.ogg",
