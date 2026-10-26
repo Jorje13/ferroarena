@@ -189,7 +189,7 @@ func _arm(sk: Skeleton3D, side: String, target: Vector3, pole_dir: Vector3, gun_
 	var l1 := a.distance_to(sk.get_bone_global_pose(lo).origin)
 	var l2 := sk.get_bone_global_pose(lo).origin.distance_to(sk.get_bone_global_pose(hd).origin)
 	target = sk.get_bone_global_pose(hd).origin.lerp(target, w)
-	var r := CharacterRig._ik(a, target, l1, l2, a + pole_dir)
+	var r := _elbow_out(side, a, target, l1, l2, pole_dir)
 	_aim_bone(sk, up, lo, r[0])
 	_aim_bone(sk, lo, hd, r[1])
 	# Hand: fingers (bone +Y) along the rifle, slightly curled down.
@@ -198,6 +198,61 @@ func _arm(sk: Skeleton3D, side: String, target: Vector3, pole_dir: Vector3, gun_
 	var want := y.lerp((gun_fwd + Vector3(0, -droop, 0)).normalized(), w).normalized()
 	var q := Quaternion(y, want)
 	sk.set_bone_global_pose(hd, Transform3D(Basis(q) * ht.basis, ht.origin))
+
+
+## Elbow swing about the shoulder -> wrist line (rad) that keeps each arm out of the torso.
+const ELBOW_STEP := 0.35
+const ELBOW_STEPS := 7
+var _elbow := {"r": 0.0, "l": 0.0}
+var _elbow_want := {"r": 0.0, "l": 0.0}
+
+
+## Two-bone IK whose elbow, when the plain pole would bury the upper arm or the forearm in the
+## chest (support hand reaching across, a tucked sprint carry), swings round the shoulder ->
+## wrist line to the nearest clear position. Eased, so the arm never snaps from one to the other.
+func _elbow_out(side: String, a: Vector3, target: Vector3, l1: float, l2: float, pole_dir: Vector3) -> Array:
+	var axis := target - a
+	if axis.length() < 0.01:
+		return CharacterRig._ik(a, target, l1, l2, a + pole_dir)
+	axis = axis.normalized()
+	var cur: float = _elbow[side]
+	var want := 0.0
+	var best := _arm_depth(CharacterRig._ik(a, target, l1, l2, a + pole_dir), a)
+	# Near raiders only (CharacterRig.detail): farther ones keep easing to their last answer.
+	if rig.detail < 2:
+		want = _elbow_want[side]
+	elif best > 0.004 or absf(cur) > 0.05:
+		# Small preferences for the animator's pole (the least swing that clears the body) and
+		# for the current swing (no flicking between two equally clear elbows).
+		var best_cost := best + 0.01 * absf(cur)
+		for i in range(1, ELBOW_STEPS + 1):
+			for sg in [1.0, -1.0]:
+				var ang: float = sg * i * ELBOW_STEP
+				var d := _arm_depth(CharacterRig._ik(a, target, l1, l2, a + Basis(axis, ang) * pole_dir), a)
+				var cost := d + 0.006 * i + 0.01 * absf(ang - cur)
+				if cost < best_cost:
+					best_cost = cost
+					want = ang
+	_elbow_want[side] = want
+	_elbow[side] = lerpf(_elbow[side], want, 1.0 - exp(-_delta_t * 14.0))
+	var res := CharacterRig._ik(a, target, l1, l2, a + Basis(axis, _elbow[side]) * pole_dir)
+	if Game.debug.has("log_elbow") and Engine.get_process_frames() % 30 == 0:
+		print("[ELBOW] skin %d %s depth %.3f swing %.2f -> %.2f after %.3f state %s aim %.1f" % [rig.skin, side, best, want, _elbow[side], _arm_depth(res, a), rig._state, rig.aim_weight()])
+	return res
+
+
+## Summed torso depth of a few points along the upper arm (away from the shoulder joint,
+## which always touches the chest) and the forearm, for an IK answer [elbow, wrist].
+func _arm_depth(r: Array, a: Vector3) -> float:
+	var e: Vector3 = r[0]
+	var h: Vector3 = r[1]
+	var d := 0.0
+	for t in [0.55, 0.8]:
+		d += rig.torso_depth(a.lerp(e, t))
+	d += rig.torso_depth(e, 0.05)
+	for t in [0.3, 0.6, 0.85]:
+		d += rig.torso_depth(e.lerp(h, t), 0.04)
+	return d
 
 
 # ---------------------------------------------------------------- fingers

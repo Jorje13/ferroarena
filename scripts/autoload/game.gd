@@ -7,7 +7,7 @@ signal all_peers_ready
 
 const DEFAULT_PORT := 7777
 ## Bump when the network protocol / gameplay changes: mismatched builds are refused.
-const GAME_VERSION := "0.27.0"
+const GAME_VERSION := "0.27.1"
 const MAX_CLIENTS := 19
 ## Biggest team (format 10v10).
 const MAX_TEAM := 10

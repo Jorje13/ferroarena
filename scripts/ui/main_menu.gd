@@ -206,6 +206,10 @@ func _debug_custom_shots() -> void:
 			_custom.hide()
 		await get_tree().create_timer(2.5).timeout
 		get_viewport().get_texture().get_image().save_png(path.replace(".png", "_%d.png" % i))
+		# --prev_frames=N: N more captures 0.15 s apart (animated --prev_loco poses), _i_f.png.
+		for fr in int(Game.debug.get("prev_frames", 0)):
+			await get_tree().create_timer(0.15).timeout
+			get_viewport().get_texture().get_image().save_png(path.replace(".png", "_%d_%d.png" % [i, fr]))
 		print("[DEBUG] armurerie ", i, " ", Game.loadout)
 	get_tree().quit()
 

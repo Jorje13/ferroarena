@@ -920,6 +920,18 @@ func update_preview(delta: float) -> void:
 	anim.set("parameters/move/blend_amount", 0.0)
 	anim.set("parameters/crouch/blend_amount", 0.0)
 	anim.set("parameters/aim_idle/blend_amount", 0.0)
+	# Debug --prev_loco=x,y[,crouch]: run the locomotion blend in place (x right, y forward, m/s).
+	if Game.debug.has("prev_loco"):
+		var lv := str(Game.debug.prev_loco).split_floats(",")
+		var v := Vector2(lv[0], lv[1] if lv.size() > 1 else 0.0)
+		var crouch := lv.size() > 2 and lv[2] > 0.5
+		anim.set("parameters/loco/blend_position", v)
+		anim.set("parameters/move/blend_amount", 1.0)
+		anim.set("parameters/loco_ts/scale", _loco_rate(v))
+		if crouch:
+			anim.set("parameters/crouch/blend_amount", 1.0)
+			anim.set("parameters/crouch_bs/blend_position", v.normalized())
+			anim.set("parameters/crouch_move/blend_amount", 1.0)
 
 
 func play_dead_instant() -> void:
@@ -1360,11 +1372,13 @@ const TORSO_CELL := 0.02
 const TORSO_BONES := ["Hips", "Spine", "Spine1", "Spine2", "Neck", "LeftShoulder", "RightShoulder"]
 ## Gap kept between the rifle and the chest surface (negative: may sink that much into the clothing).
 const CLIP_MARGIN := -0.03
+## Gap kept between the trigger hand's grip and the chest surface (the hand's own thickness).
+const HAND_CLEAR := 0.02
 ## How far the butt plate sits into the measured chest front (padding, compressed shoulder).
 const POCKET_SINK := 0.025
 const POCKET_MAX_AHEAD := 0.1
 static var _torso_cache := {}
-var _torso := {"grid": {}, "pocket": Vector3(-0.13, 0.06, 0.16)}
+var _torso := {"grid": {}, "back": {}, "pocket": Vector3(-0.13, 0.06, 0.16)}
 var _chest_frame := Transform3D()
 var _chest_rest_inv := Basis()
 ## Butt plate centre height in the gun frame, per weapon.
@@ -1386,6 +1400,7 @@ static func _torso_profile(p_skin: int, body: Node3D, sk: Skeleton3D) -> Diction
 	var arm := sk.get_bone_global_rest(sk.find_bone(bone_name("upperarm_r"))).origin - ch
 	var pocket := Vector3(arm.x * 0.7, arm.y - 0.03, 0.0)
 	var grid := {}
+	var back := {}
 	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
 		if mi.skin == null or mi.mesh == null:
 			continue
@@ -1413,6 +1428,7 @@ static func _torso_profile(p_skin: int, body: Node3D, sk: Skeleton3D) -> Diction
 				var p := verts[v] - ch
 				var key := Vector2i(floori(p.x / TORSO_CELL), floori(p.y / TORSO_CELL))
 				grid[key] = maxf(grid.get(key, -INF), p.z)
+				back[key] = minf(back.get(key, INF), p.z)
 	# Pocket depth: median of the cell fronts around it, so straps, grenades or pouches sewn on
 	# the chest don't push the butt off the shoulder.
 	var fronts := []
@@ -1425,7 +1441,7 @@ static func _torso_profile(p_skin: int, body: Node3D, sk: Skeleton3D) -> Diction
 	# ...and never further out than a hand's breadth in front of the shoulder joint (thick
 	# jackets would otherwise hold the rifle out at arm's length).
 	pocket.z = minf(pocket.z, arm.z + POCKET_MAX_AHEAD)
-	var res := {"grid": grid, "pocket": pocket}
+	var res := {"grid": grid, "back": back, "pocket": pocket}
 	_torso_cache[p_skin] = res
 	return res
 
@@ -1442,6 +1458,23 @@ func _torso_front(x: float, y: float) -> float:
 	return z
 
 
+## How deep (m) a skeleton-space point of a limb `radius` thick sits inside the torso, between
+## its measured front and back at that (x, y); 0 outside. Keeps the arms out of the chest.
+func torso_depth(p_s: Vector3, radius := 0.045) -> float:
+	var l := _chest_frame.affine_inverse() * p_s
+	var key := Vector2i(floori(l.x / TORSO_CELL), floori(l.y / TORSO_CELL))
+	var f: float = _torso.grid.get(key, -INF)
+	if f == -INF:
+		return 0.0
+	var b: float = _torso.back.get(key, f - 0.25)
+	# Sideways: how far in from the torso's flank (an arm hanging beside the body only grazes it).
+	var side := 1 if l.x > 0.0 else -1
+	var lat := 0.0
+	while lat < 0.1 and _torso.grid.has(Vector2i(key.x + side * (int(lat / TORSO_CELL) + 1), key.y)):
+		lat += TORSO_CELL
+	return maxf(0.0, minf(minf(f + radius - l.z, l.z - b + radius), lat))
+
+
 ## Skeleton-space shift that takes the rifle (pose `gun_s`) out of the chest: the deepest of a
 ## few points along the stock and the fore-end, pushed back to the measured surface.
 func clip_push(gun_s: Transform3D) -> Vector3:
@@ -1455,6 +1488,12 @@ func clip_push(gun_s: Transform3D) -> Vector3:
 		var f := _torso_front(l.x, l.y)
 		if f > -INF:
 			pen = maxf(pen, f + CLIP_MARGIN - l.z)
+	# The trigger hand wraps the grip: its back stays in front of the jacket (low carries).
+	if grip_r:
+		var l := inv * (gun_s * grip_r.position)
+		var f := _torso_front(l.x, l.y)
+		if f > -INF:
+			pen = maxf(pen, f + HAND_CLEAR - l.z)
 	# Shouldered, a bulky jacket may swallow the butt a little rather than hold the rifle out.
 	pen = minf(pen, lerpf(0.12, 0.04, _aim))
 	return _chest_frame.basis.z * pen * w
